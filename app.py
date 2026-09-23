@@ -1,7 +1,6 @@
-import streamlit as pd
 import streamlit as st
-import sqlite3
 import pandas as pd
+import sqlite3
 import os
 
 # Configuração da página
@@ -233,6 +232,14 @@ with tab2:
             "amazon_pdv": "Amazon (R$)",
             "magalu_pdv": "Magalu (R$)"
         })
+        
+        # Reorganizar a ordem das colunas para colocar "Fábrica" logo no início
+        cols_ordem = [
+            "ID", "Data", "Fábrica", "Produto", "FOB ($)", "Qtd Container", 
+            "Peso (kg)", "Comp (cm)", "Larg (cm)", "Alt (cm)", 
+            "ML Clássico (R$)", "ML Premium (R$)", "Shopee (R$)", "Amazon (R$)", "Magalu (R$)"
+        ]
+        df_display = df_display[cols_ordem]
         
         st.dataframe(df_display, use_container_width=True)
         
