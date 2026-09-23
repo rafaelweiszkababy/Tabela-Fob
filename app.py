@@ -19,6 +19,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS calculos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             data_calculo TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            fabrica TEXT,
             nome_produto TEXT,
             fob_usd REAL,
             qtd INTEGER,
@@ -36,16 +37,16 @@ def init_db():
     conn.commit()
     conn.close()
 
-def salvar_no_banco(nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
+def salvar_no_banco(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
         INSERT INTO calculos (
-            nome_produto, fob_usd, qtd, peso_kg, comprimento_cm, largura_cm, altura_cm,
+            fabrica, nome_produto, fob_usd, qtd, peso_kg, comprimento_cm, largura_cm, altura_cm,
             ml_classico_pdv, ml_premium_pdv, shopee_pdv, amazon_pdv, magalu_pdv
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        nome, fob, qtd, peso, comp, larg, alt,
+        fabrica, nome, fob, qtd, peso, comp, larg, alt,
         resultados_dict.get('Mercado Livre Clássico'),
         resultados_dict.get('Mercado Livre Premium'),
         resultados_dict.get('Shopee'),
@@ -171,6 +172,7 @@ with tab1:
     with st.form("form_produto"):
         col1, col2, col3 = st.columns(3)
         with col1:
+            fabrica_prod = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A")
             nome_prod = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X")
             fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 12.50")
         with col2:
@@ -184,18 +186,18 @@ with tab1:
         submitted = st.form_submit_button("Calcular e Salvar no Banco")
 
     if submitted:
-        if not nome_prod or not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
+        if not fabrica_prod or not nome_prod or not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
             st.error("Preencha todos os campos obrigatórios para realizar o cálculo.")
         elif fob_val <= 0 or qtd_val <= 0 or peso_val <= 0 or comp_val <= 0 or larg_val <= 0 or alt_val <= 0:
             st.error("Os valores informados devem ser maiores que zero.")
         else:
             res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val)
             
-            # Salva automaticamente no banco de dados SQLite
-            salvar_no_banco(nome_prod, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
+            # Salva automaticamente no banco de dados SQLite incluindo a fábrica
+            salvar_no_banco(fabrica_prod, nome_prod, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
             
-            st.success(f"Cálculo realizado e produto '{nome_prod}' salvo com sucesso no banco de dados!")
-            st.subheader(f"Tabela de PDV — Produto: {nome_prod}")
+            st.success(f"Cálculo realizado e produto '{nome_prod}' da fábrica '{fabrica_prod}' salvo com sucesso!")
+            st.subheader(f"Tabela de PDV — Produto: {nome_prod} ({fabrica_prod})")
             st.table(res_tabela)
 
 with tab2:
@@ -209,6 +211,7 @@ with tab2:
         df_display = df_historico.rename(columns={
             "id": "ID",
             "data_calculo": "Data",
+            "fabrica": "Fábrica",
             "nome_produto": "Produto",
             "fob_usd": "FOB ($)",
             "qtd": "Qtd Container",
