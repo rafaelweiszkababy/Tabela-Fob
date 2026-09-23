@@ -1,6 +1,7 @@
+import streamlit as pd
 import streamlit as st
-import pandas as pd
 import sqlite3
+import pandas as pd
 import os
 
 # Configuração da página
@@ -15,6 +16,7 @@ DB_FILE = "historico_produtos.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # Cria a tabela se não existir
     c.execute('''
         CREATE TABLE IF NOT EXISTS calculos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +36,12 @@ def init_db():
             magalu_pdv REAL
         )
     ''')
+    # Garantia extra: se o banco já existia sem a coluna 'fabrica', adiciona-a agora
+    try:
+        c.execute("ALTER TABLE calculos ADD COLUMN fabrica TEXT")
+    except sqlite3.OperationalError:
+        pass # A coluna já existe
+        
     conn.commit()
     conn.close()
 
@@ -69,7 +77,7 @@ def deletar_registro(id_registro):
     conn.commit()
     conn.close()
 
-# Inicializa o banco de dados
+# Inicializa o banco de dados e corrige colunas se necessário
 init_db()
 
 # --- REGRAS DE NEGÓCIO E FRETE ---
