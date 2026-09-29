@@ -80,7 +80,7 @@ def carregar_do_google_sheets():
                     for idx, row in enumerate(data[1:], start=2):
                         rows.append([idx] + row)
                     df = pd.DataFrame(rows, columns=headers)
-                    return df.iloc[::-1]
+                    return df.iloc[::-1]  # Inverte para mostrar os registros mais recentes primeiro
             except Exception:
                 st.warning("Verifique se o Google Apps Script está configurado com permissão de acesso para 'Qualquer pessoa'.")
         return pd.DataFrame()
@@ -101,10 +101,11 @@ EXCEL_ML_TABLE_VALUES = [
 ]
 
 def get_frete_ml_matriz(peso_tarifa):
-    for w, val in zip(WEIGHT_ROWS, EXCEL_ML_TABLE_VALUES):
-        if peso_tarifa <= w:
-            return val
-    return EXCEL_ML_TABLE_VALUES[-1]
+    w_idx = 0
+    for i, w in enumerate(WEIGHT_ROWS):
+        if peso_tarifa >= w:
+            w_idx = i
+    return EXCEL_ML_TABLE_VALUES[w_idx]
 
 FRETE_ML_G1_TABELA = [
     (0.3, 19.95), (0.5, 20.45), (1.0, 21.45), (2.0, 22.95), (3.0, 23.95),
@@ -118,14 +119,16 @@ def get_frete_ml_g1(peso):
             return valor
     return 116.95
 
-def get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=100.0):
-    if canal in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
-        tx_mkt = 0.115 if canal == 'Mercado Livre Clássico' else 0.165
-        if pdv_estimado < 79.0:
-            j = -6.0
-        else:
-            frete_ml = get_frete_ml_matriz(peso_tarifa)
-            j = -frete_ml
+def get_taxas_canal(canal, peso_tarifa, frete_g1):
+    # Restaurado estritamente para a sua lógica original aprovada
+    if canal == 'Mercado Livre Clássico':
+        tx_mkt = 0.115
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
+    elif canal == 'Mercado Livre Premium':
+        tx_mkt = 0.165
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
     elif canal == 'Shopee':
         tx_mkt = 0.14
         j = -31.0
@@ -138,13 +141,13 @@ def get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=100.0):
     return tx_mkt, j
 
 # --- CÁLCULO DIRETO (FOB -> PDV) ---
-def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, frete_mar=frete_maritimo, margem=margem_alvo, target_pdv_ref=None):
+def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    valor_fob_total = fob * qtd * cambio
-    frete_brl = frete_mar * cambio
+    valor_fob_total = fob * qtd * taxa_cambio
+    frete_brl = frete_maritimo * taxa_cambio
     valor_aduaneiro = valor_fob_total + frete_brl + 80.0
     
     ii = 0.20 * valor_aduaneiro
@@ -155,7 +158,7 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, fre
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
     icms_imp = (valor_aduaneiro + ii + ipi + pis + cofins + afrmm + siscomex) / (1 - 0.18) * 0.18
     
     total_importacao = valor_aduaneiro + ii + ipi + pis + cofins + icms_imp + despesas_log
@@ -167,38 +170,14 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, fre
     valores_pdv_dict = {}
     
     for canal in canais_nomes:
-        if canal in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
-            tx_mkt = 0.115 if canal == 'Mercado Livre Clássico' else 0.165
-            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
-            frete_ml = get_frete_ml_matriz(peso_tarifa)
-            
-            # Cálculo sob regra de limite maior ou igual a R$ 79 (Frete Grátis)
-            j_high = -frete_ml
-            pdv_high = (fixed_base - j_high) / denom
-            
-            # Cálculo sob regra de limite menor que R$ 79 (Taxa Fixa)
-            j_low = -6.0
-            pdv_low = (fixed_base - j_low) / denom
-            
-            # Regra de Simetria para Cálculo Inverso: Se foi forçado um target < 79 no ML, o direto trava na regra low.
-            if target_pdv_ref is not None and target_pdv_ref >= 79.0:
-                pdv = pdv_high
-                j = j_high
-            elif target_pdv_ref is not None and target_pdv_ref < 79.0:
-                pdv = pdv_low
-                j = j_low
-            elif pdv_low < 79.0:
-                pdv = pdv_low
-                j = j_low
-            else:
-                pdv = pdv_high
-                j = j_high
-        else:
-            tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
-            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+        tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
+        pdv = 300.0
+        # A sua mesma iteração de precisão original foi restaurada aqui
+        for _ in range(20):
+            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
             pdv = (fixed_base - j) / denom
             
-        lucro = pdv * margem
+        lucro = pdv * margem_alvo
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append({
             "Marketplace": canal,
@@ -206,32 +185,32 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, fre
             "Frete / Taxa Fixa": f"R$ {j:.2f}",
             "PDV Recomendado": f"R$ {pdv:.2f}",
             "Lucro Unitário": f"R$ {lucro:.2f}",
-            "Margem Resultante": f"{margem*100:.1f}%"
+            "Margem Resultante": f"{margem_alvo*100:.1f}%"
         })
     return resultados, valores_pdv_dict
 
 # --- CÁLCULO INVERSO (PDV -> TARGET FOB) ---
-def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, frete_mar=frete_maritimo, margem=margem_alvo):
+def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1, pdv_estimado=pdv_alvo)
+    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
     
-    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
     fixed_base = (pdv_alvo * denom) + j
     custo_base = fixed_base - 2.0
     
-    frete_brl = frete_mar * cambio
+    frete_brl = frete_maritimo * taxa_cambio
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
     
     custo_total_base = custo_base * qtd
     valor_aduaneiro = (custo_total_base - despesas_log) / 1.20
     fob_total_brl = valor_aduaneiro - frete_brl - 80.0
-    fob_usd_max = fob_total_brl / (qtd * cambio)
+    fob_usd_max = fob_total_brl / (qtd * taxa_cambio)
     
     return max(0.0, fob_usd_max)
 
@@ -269,7 +248,7 @@ with tab1:
             fab_final = fabrica_prod.strip() if (fabrica_prod and fabrica_prod.strip()) else "Não informada"
             nome_final = nome_prod.strip() if (nome_prod and nome_prod.strip()) else "Sem nome"
             
-            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val, taxa_cambio, frete_maritimo, margem_alvo)
+            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val)
             ok = salvar_no_google_sheets(fab_final, nome_final, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
             if ok:
                 st.success("Cálculo realizado e salvo na planilha do Google Sheets com sucesso!")
@@ -308,17 +287,17 @@ with tab2:
             fab_inv_final = fabrica_inv.strip() if (fabrica_inv and fabrica_inv.strip()) else "Não informada"
             nome_inv_final = nome_inv.strip() if (nome_inv and nome_inv.strip()) else "Sem nome"
             
-            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
+            # Aqui calculamos o FOB a partir do PDV exato
+            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
             
             if fob_calculado <= 0:
-                st.warning("O PDV desejado é muito baixo para cobrir os custos fixos de logística e impostos (o valor do FOB calculado ficou negativo). Aumente o PDV alvo para este marketplace.")
+                st.warning("O PDV desejado é muito baixo para cobrir os custos logísticos (o FOB ficou negativo). Aumente o PDV alvo.")
             else:
                 st.metric(label=f"💵 Preço FOB Máximo Recomendado ({fab_inv_final} - {nome_inv_final})", value=f"USD ${fob_calculado:.2f}")
                 st.info(f"Para vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** mantendo a margem de **{margem_alvo*100:.1f}%**, o preço FOB máximo a negociar com a fábrica é **USD ${fob_calculado:.2f}**.")
                 
-                # Passa o pdv_alvo_val como referencia (target_pdv_ref) para garantir que a re-projeção do Mercado Livre faça a conta espelho perfeitamente.
-                target_ref = pdv_alvo_val if canal_ref in ['Mercado Livre Clássico', 'Mercado Livre Premium'] else None
-                res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo, target_pdv_ref=target_ref)
+                # E agora passamos o fob_calculado para re-exibir a tabela inteira!
+                res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
                 
                 salvar_no_google_sheets(fab_inv_final, nome_inv_final, fob_calculado, qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
                 
