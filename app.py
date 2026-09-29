@@ -37,7 +37,7 @@ def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resu
     payload = {
         "fabrica": fabrica,
         "nome_produto": nome,
-        "fob_usd": fob,
+        "fob_usd": round(fob, 4),
         "qtd": qtd,
         "peso_kg": peso,
         "comprimento_cm": comp,
@@ -139,13 +139,14 @@ def get_taxas_canal(canal, peso_tarifa, frete_g1):
         j = -5.0 - frete_g1
     return tx_mkt, j
 
-def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
+# --- CÁLCULO DIRETO (FOB -> PDV) ---
+def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, frete_mar=frete_maritimo, margem=margem_alvo):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    valor_fob_total = fob * qtd * taxa_cambio
-    frete_brl = frete_maritimo * taxa_cambio
+    valor_fob_total = fob * qtd * cambio
+    frete_brl = frete_mar * cambio
     valor_aduaneiro = valor_fob_total + frete_brl + 80.0
     
     ii = 0.20 * valor_aduaneiro
@@ -156,7 +157,7 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
     icms_imp = (valor_aduaneiro + ii + ipi + pis + cofins + afrmm + siscomex) / (1 - 0.18) * 0.18
     
     total_importacao = valor_aduaneiro + ii + ipi + pis + cofins + icms_imp + despesas_log
@@ -169,12 +170,9 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     
     for canal in canais_nomes:
         tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
-        pdv = 300.0
-        for _ in range(20):
-            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
-            pdv = (fixed_base - j) / denom
-            
-        lucro = pdv * margem_alvo
+        denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+        pdv = (fixed_base - j) / denom
+        lucro = pdv * margem
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append({
             "Marketplace": canal,
@@ -182,31 +180,32 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
             "Frete / Taxa Fixa": f"R$ {j:.2f}",
             "PDV Recomendado": f"R$ {pdv:.2f}",
             "Lucro Unitário": f"R$ {lucro:.2f}",
-            "Margem Resultante": f"{margem_alvo*100:.1f}%"
+            "Margem Resultante": f"{margem*100:.1f}%"
         })
     return resultados, valores_pdv_dict
 
-def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico):
+# --- CÁLCULO INVERSO (PDV -> TARGET FOB) ---
+def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, frete_mar=frete_maritimo, margem=margem_alvo):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
     tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
     
-    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
+    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
     fixed_base = (pdv_alvo * denom) + j
     custo_base = fixed_base - 2.0
     
-    frete_brl = frete_maritimo * taxa_cambio
+    frete_brl = frete_mar * cambio
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
     
     custo_total_base = custo_base * qtd
     valor_aduaneiro = (custo_total_base - despesas_log) / 1.20
     fob_total_brl = valor_aduaneiro - frete_brl - 80.0
-    fob_usd_max = fob_total_brl / (qtd * taxa_cambio)
+    fob_usd_max = fob_total_brl / (qtd * cambio)
     
     return max(0.0, fob_usd_max)
 
@@ -218,8 +217,8 @@ with tab1:
     with st.form("form_produto_direto"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            fabrica_prod = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A", key="fab_dir")
-            nome_prod = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X", key="nome_dir")
+            fabrica_prod = st.text_input("Fábrica (Opcional)", value=None, placeholder="Ex: Fornecedor A", key="fab_dir")
+            nome_prod = st.text_input("Nome/Código do Produto (Opcional)", value=None, placeholder="Ex: Produto X", key="nome_dir")
             fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 12.50", key="fob_dir")
         with col2:
             qtd_val = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_dir")
@@ -236,16 +235,19 @@ with tab1:
             st.form_submit_button("🧹 Limpar Campos", on_click=reset_tab1)
 
     if submitted_direto:
-        if not fabrica_prod or not nome_prod or not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
-            st.error("Preencha todos os campos obrigatórios para realizar o cálculo.")
+        if not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
+            st.error("Preencha todos os campos numéricos obrigatórios para realizar o cálculo.")
         elif fob_val <= 0 or qtd_val <= 0 or peso_val <= 0 or comp_val <= 0 or larg_val <= 0 or alt_val <= 0:
-            st.error("Os valores informados devem ser maiores que zero.")
+            st.error("Os valores numéricos devem ser maiores que zero.")
         else:
-            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val)
-            ok = salvar_no_google_sheets(fabrica_prod, nome_prod, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
+            fab_final = fabrica_prod.strip() if (fabrica_prod and fabrica_prod.strip()) else "Não informada"
+            nome_final = nome_prod.strip() if (nome_prod and nome_prod.strip()) else "Sem nome"
+            
+            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val, taxa_cambio, frete_maritimo, margem_alvo)
+            ok = salvar_no_google_sheets(fab_final, nome_final, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
             if ok:
                 st.success(f"Cálculo realizado e salvo na planilha do Google Sheets com sucesso!")
-            st.subheader(f"Tabela de PDV — Produto: {nome_prod} ({fabrica_prod})")
+            st.subheader(f"Tabela de PDV — Produto: {nome_final} ({fab_final})")
             st.table(res_tabela)
 
 with tab2:
@@ -253,8 +255,8 @@ with tab2:
     with st.form("form_produto_inverso"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            fabrica_inv = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A", key="fab_inv")
-            nome_inv = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X", key="nome_inv")
+            fabrica_inv = st.text_input("Fábrica (Opcional)", value=None, placeholder="Ex: Fornecedor A", key="fab_inv")
+            nome_inv = st.text_input("Nome/Código do Produto (Opcional)", value=None, placeholder="Ex: Produto X", key="nome_inv")
             pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, placeholder="Ex: 150.00", key="pdv_inv")
             canal_ref = st.selectbox("Marketplace de Referência", ['Mercado Livre Clássico', 'Mercado Livre Premium', 'Shopee', 'Amazon', 'Magalu'])
         with col2:
@@ -272,21 +274,33 @@ with tab2:
             st.form_submit_button("🧹 Limpar Campos", on_click=reset_tab2)
 
     if submitted_inverso:
-        if not fabrica_inv or not nome_inv or not pdv_alvo_val or not qtd_inv or not peso_inv or not comp_inv or not larg_inv or not alt_inv:
-            st.error("Preencha todos os campos obrigatórios.")
+        if not pdv_alvo_val or not qtd_inv or not peso_inv or not comp_inv or not larg_inv or not alt_inv:
+            st.error("Preencha todos os campos numéricos obrigatórios.")
         elif pdv_alvo_val <= 0 or qtd_inv <= 0 or peso_inv <= 0 or comp_inv <= 0 or larg_inv <= 0 or alt_inv <= 0:
-            st.error("Os valores informados devem ser maiores que zero.")
+            st.error("Os valores numéricos devem ser maiores que zero.")
         else:
-            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
+            fab_inv_final = fabrica_inv.strip() if (fabrica_inv and fabrica_inv.strip()) else "Não informada"
+            nome_inv_final = nome_inv.strip() if (nome_inv and nome_inv.strip()) else "Sem nome"
             
-            st.metric(label=f"💵 Preço FOB Máximo Recomendado ({fabrica_inv} - {nome_inv})", value=f"USD ${fob_calculado:.2f}")
-            st.info(f"Com o preço FOB de **USD ${fob_calculado:.2f}**, você consegue vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** mantendo a margem de {margem_alvo*100:.1f}%.")
+            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
             
-            res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
-            salvar_no_google_sheets(fabrica_inv, nome_inv, round(fob_calculado, 2), qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
-            
-            st.subheader("Projeção de PDV para todos os Marketplaces com esse FOB:")
-            st.table(res_tabela)
+            if fob_calculado <= 0:
+                st.warning("O PDV desejado é muito baixo para cobrir os custos fixos de logística e impostos. Aumente o PDV alvo.")
+            else:
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    st.metric(label=f"💵 FOB Máximo Exato (4 Casas)", value=f"USD ${fob_calculado:.4f}")
+                with col_m2:
+                    st.metric(label=f"💵 FOB Máximo Arredondado (2 Casas)", value=f"USD ${fob_calculado:.2f}")
+                
+                st.info(f"Para vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** com margem de **{margem_alvo*100:.1f}%**, o preço FOB máximo a negociar com a fábrica é **USD ${fob_calculado:.4f}**.")
+                
+                # Projeção utilizando o FOB exato para garantir que o marketplace de referência bata o PDV exato
+                res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
+                salvar_no_google_sheets(fab_inv_final, nome_inv_final, fob_calculado, qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
+                
+                st.subheader("Projeção de PDV para todos os Marketplaces com esse FOB:")
+                st.table(res_tabela)
 
 with tab3:
     st.subheader("📊 Registros Gravados no Google Sheets")
