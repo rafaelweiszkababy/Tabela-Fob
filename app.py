@@ -5,17 +5,13 @@ import requests
 # Configuração da página
 st.set_page_config(page_title="Simulador de Importação & PDV", layout="wide")
 
-# URL do seu Google Apps Script
-URL_GOOGLE_SHEETS = "https://script.google.com/macros/s/AKfycbxrylmS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec"
+# URL do Google Apps Script
+URL_GOOGLE_SHEETS = "https://script.google.com/macros/s/AKfycbxry1mS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec"
 
 st.title("🚢 Simulador de Importação & Preço de Venda (PDV)")
 st.write("Conectado ao Google Sheets para persistência permanente dos dados.")
 
 def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
-    if not URL_GOOGLE_SHEETS or "SUA_URL" in URL_GOOGLE_SHEETS:
-        st.warning("Insira a URL do seu Google Apps Script no código para salvar na planilha.")
-        return False
-        
     payload = {
         "fabrica": fabrica,
         "nome_produto": nome,
@@ -39,8 +35,6 @@ def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resu
         return False
 
 def carregar_do_google_sheets():
-    if not URL_GOOGLE_SHEETS or "SUA_URL" in URL_GOOGLE_SHEETS:
-        return pd.DataFrame()
     try:
         res = requests.get(URL_GOOGLE_SHEETS, allow_redirects=True)
         if res.status_code == 200:
@@ -50,9 +44,9 @@ def carregar_do_google_sheets():
                     headers = data[0]
                     rows = data[1:]
                     df = pd.DataFrame(rows, columns=headers)
-                    return df.iloc[::-1]  # Inverte para mostrar os mais recentes primeiro
+                    return df.iloc[::-1]  # Inverte para mostrar os registros mais recentes primeiro
             except Exception:
-                st.warning("Aguardando permissão do Google Apps Script. Verifique se o acesso está configurado como 'Qualquer pessoa'.")
+                st.warning("Verifique se o Google Apps Script está configurado com permissão de acesso para 'Qualquer pessoa'.")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Erro ao carregar do Google Sheets: {e}")
@@ -255,7 +249,7 @@ with tab3:
     df_sheets = carregar_do_google_sheets()
     
     if df_sheets.empty:
-        st.info("Nenhum registro encontrado ou a URL do Google Apps Script ainda não foi configurada.")
+        st.info("Aguardando os primeiros registros ou verificando conexão...")
     else:
         st.dataframe(df_sheets, use_container_width=True)
         
