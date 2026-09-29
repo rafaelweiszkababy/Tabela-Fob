@@ -5,8 +5,7 @@ import requests
 # Configuração da página
 st.set_page_config(page_title="Simulador de Importação & PDV", layout="wide")
 
-https://script.google.com/macros/s/AKfycbxry1mS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec
-
+URL_GOOGLE_SHEETS = "https://script.google.com/macros/s/AKfycbxrylmS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec"
 st.title("🚢 Simulador de Importação & Preço de Venda (PDV)")
 st.write("Conectado ao Google Sheets para persistência permanente dos dados.")
 
