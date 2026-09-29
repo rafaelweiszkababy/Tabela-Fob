@@ -1,83 +1,57 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-import os
+import requests
 
 # Configuração da página
 st.set_page_config(page_title="Simulador de Importação & PDV", layout="wide")
 
+https://script.google.com/macros/s/AKfycbxry1mS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec
+
 st.title("🚢 Simulador de Importação & Preço de Venda (PDV)")
-st.write("Preencha os dados abaixo para calcular os preços recomendados e salvar no banco de dados.")
+st.write("Conectado ao Google Sheets para persistência permanente dos dados.")
 
-# --- BANCO DE DADOS (SQLite) ---
-DB_FILE = "historico_produtos.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Cria a tabela se não existir
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS calculos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data_calculo TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            fabrica TEXT,
-            nome_produto TEXT,
-            fob_usd REAL,
-            qtd INTEGER,
-            peso_kg REAL,
-            comprimento_cm REAL,
-            largura_cm REAL,
-            altura_cm REAL,
-            ml_classico_pdv REAL,
-            ml_premium_pdv REAL,
-            shopee_pdv REAL,
-            amazon_pdv REAL,
-            magalu_pdv REAL
-        )
-    ''')
-    # Garantia extra: se o banco já existia sem a coluna 'fabrica', adiciona-a agora
-    try:
-        c.execute("ALTER TABLE calculos ADD COLUMN fabrica TEXT")
-    except sqlite3.OperationalError:
-        pass # A coluna já existe
+def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
+    if "SUA_URL_DO_GOOGLE_APPS_SCRIPT" in URL_GOOGLE_SHEETS:
+        st.warning("Insira a URL do seu Google Apps Script no código para salvar na planilha.")
+        return False
         
-    conn.commit()
-    conn.close()
+    payload = {
+        "fabrica": fabrica,
+        "nome_produto": nome,
+        "fob_usd": fob,
+        "qtd": qtd,
+        "peso_kg": peso,
+        "comprimento_cm": comp,
+        "largura_cm": larg,
+        "altura_cm": alt,
+        "ml_classico_pdv": resultados_dict.get('Mercado Livre Clássico'),
+        "ml_premium_pdv": resultados_dict.get('Mercado Livre Premium'),
+        "shopee_pdv": resultados_dict.get('Shopee'),
+        "amazon_pdv": resultados_dict.get('Amazon'),
+        "magalu_pdv": resultados_dict.get('Magalu')
+    }
+    try:
+        res = requests.post(URL_GOOGLE_SHEETS, json=payload)
+        return res.status_code == 200
+    except Exception as e:
+        st.error(f"Erro ao salvar no Google Sheets: {e}")
+        return False
 
-def salvar_no_banco(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO calculos (
-            fabrica, nome_produto, fob_usd, qtd, peso_kg, comprimento_cm, largura_cm, altura_cm,
-            ml_classico_pdv, ml_premium_pdv, shopee_pdv, amazon_pdv, magalu_pdv
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        fabrica, nome, fob, qtd, peso, comp, larg, alt,
-        resultados_dict.get('Mercado Livre Clássico'),
-        resultados_dict.get('Mercado Livre Premium'),
-        resultados_dict.get('Shopee'),
-        resultados_dict.get('Amazon'),
-        resultados_dict.get('Magalu')
-    ))
-    conn.commit()
-    conn.close()
-
-def carregar_historico():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM calculos ORDER BY id DESC", conn)
-    conn.close()
-    return df
-
-def deletar_registro(id_registro):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM calculos WHERE id = ?", (id_registro,))
-    conn.commit()
-    conn.close()
-
-# Inicializa o banco de dados e corrige colunas se necessário
-init_db()
+def carregar_do_google_sheets():
+    if "SUA_URL_DO_GOOGLE_APPS_SCRIPT" in URL_GOOGLE_SHEETS:
+        return pd.DataFrame()
+    try:
+        res = requests.get(URL_GOOGLE_SHEETS)
+        data = res.json()
+        if len(data) > 1:
+            headers = data[0]
+            rows = data[1:]
+            df = pd.DataFrame(rows, columns=headers)
+            return df.iloc[::-1]  # Inverte para mostrar os mais recentes primeiro
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao carregar do Google Sheets: {e}")
+        return pd.DataFrame()
 
 # --- REGRAS DE NEGÓCIO E FRETE ---
 st.sidebar.header("⚙️ Configurações Globais")
@@ -110,6 +84,26 @@ def get_frete_ml_g1(peso):
             return valor
     return 116.95
 
+def get_taxas_canal(canal, peso_tarifa, frete_g1):
+    if canal == 'Mercado Livre Clássico':
+        tx_mkt = 0.115
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
+    elif canal == 'Mercado Livre Premium':
+        tx_mkt = 0.165
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
+    elif canal == 'Shopee':
+        tx_mkt = 0.14
+        j = -31.0
+    elif canal == 'Amazon':
+        tx_mkt = 0.12
+        j = -5.5 - frete_g1
+    elif canal == 'Magalu':
+        tx_mkt = 0.18
+        j = -5.0 - frete_g1
+    return tx_mkt, j
+
 def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
@@ -134,29 +128,14 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     custo_base = (total_importacao - pis - cofins - ipi - icms_imp) / qtd
     fixed_base = custo_base + 2.0
     
-    canais = [
-        ('Mercado Livre Clássico', 0.115),
-        ('Mercado Livre Premium', 0.165),
-        ('Shopee', 0.14),
-        ('Amazon', 0.12),
-        ('Magalu', 0.18)
-    ]
-    
+    canais_nomes = ['Mercado Livre Clássico', 'Mercado Livre Premium', 'Shopee', 'Amazon', 'Magalu']
     resultados = []
     valores_pdv_dict = {}
-    for canal, tx_mkt in canais:
+    
+    for canal in canais_nomes:
+        tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
         pdv = 300.0
         for _ in range(20):
-            if 'Mercado Livre' in canal:
-                frete_ml = get_frete_ml_matriz(peso_tarifa)
-                j = -frete_ml - 5.0
-            elif canal == 'Shopee':
-                j = -31.0
-            elif canal == 'Amazon':
-                j = -5.5 - frete_g1
-            elif canal == 'Magalu':
-                j = -5.0 - frete_g1
-                
             denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
             pdv = (fixed_base - j) / denom
             
@@ -172,11 +151,36 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
         })
     return resultados, valores_pdv_dict
 
+def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico):
+    peso_cubado = (comp * larg * alt) / 6000.0
+    peso_tarifa = max(peso_fisico, peso_cubado)
+    frete_g1 = get_frete_ml_g1(peso_tarifa)
+    
+    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
+    
+    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
+    fixed_base = (pdv_alvo * denom) + j
+    custo_base = fixed_base - 2.0
+    
+    frete_brl = frete_maritimo * taxa_cambio
+    thc = 998.0
+    siscomex = 154.23
+    afrmm = 0.08 * (frete_brl + thc) + 21.20
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
+    
+    custo_total_base = custo_base * qtd
+    valor_aduaneiro = (custo_total_base - despesas_log) / 1.20
+    fob_total_brl = valor_aduaneiro - frete_brl - 80.0
+    fob_usd_max = fob_total_brl / (qtd * taxa_cambio)
+    
+    return max(0.0, fob_usd_max)
+
 # --- NAVEGAÇÃO POR ABAS ---
-tab1, tab2 = st.tabs(["🧮 Novo Cálculo", "🗄️ Banco de Dados / Histórico"])
+tab1, tab2, tab3 = st.tabs(["🧮 Cálculo Direto (FOB → PDV)", "🔄 Cálculo Inverso (PDV → FOB)", "📊 Histórico Google Sheets"])
 
 with tab1:
-    with st.form("form_produto"):
+    st.subheader("Calcular PDV Recomendado por Marketplace")
+    with st.form("form_produto_direto"):
         col1, col2, col3 = st.columns(3)
         with col1:
             fabrica_prod = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A")
@@ -190,78 +194,70 @@ with tab1:
             larg_val = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15")
             alt_val = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10")
             
-        submitted = st.form_submit_button("Calcular e Salvar no Banco")
+        submitted_direto = st.form_submit_button("Calcular e Salvar na Planilha")
 
-    if submitted:
+    if submitted_direto:
         if not fabrica_prod or not nome_prod or not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
             st.error("Preencha todos os campos obrigatórios para realizar o cálculo.")
         elif fob_val <= 0 or qtd_val <= 0 or peso_val <= 0 or comp_val <= 0 or larg_val <= 0 or alt_val <= 0:
             st.error("Os valores informados devem ser maiores que zero.")
         else:
             res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val)
-            
-            # Salva automaticamente no banco de dados SQLite incluindo a fábrica
-            salvar_no_banco(fabrica_prod, nome_prod, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
-            
-            st.success(f"Cálculo realizado e produto '{nome_prod}' da fábrica '{fabrica_prod}' salvo com sucesso!")
+            ok = salvar_no_google_sheets(fabrica_prod, nome_prod, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
+            if ok:
+                st.success(f"Cálculo realizado e salvo na planilha do Google Sheets com sucesso!")
             st.subheader(f"Tabela de PDV — Produto: {nome_prod} ({fabrica_prod})")
             st.table(res_tabela)
 
 with tab2:
-    st.subheader("📦 Produtos Gravados no Banco de Dados")
-    df_historico = carregar_historico()
+    st.subheader("Descobrir o Preço FOB Máximo a partir do PDV Desejado")
+    with st.form("form_produto_inverso"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            fabrica_inv = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A", key="fab_inv")
+            nome_inv = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X", key="nome_inv")
+            pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, placeholder="Ex: 150.00")
+            canal_ref = st.selectbox("Marketplace de Referência", ['Mercado Livre Clássico', 'Mercado Livre Premium', 'Shopee', 'Amazon', 'Magalu'])
+        with col2:
+            qtd_inv = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_inv")
+            peso_inv = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 2.5", key="peso_inv")
+        with col3:
+            comp_inv = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 20", key="comp_inv")
+            larg_inv = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15", key="larg_inv")
+            alt_inv = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10", key="alt_inv")
+            
+        submitted_inverso = st.form_submit_button("Calcular Preço FOB Máximo")
+
+    if submitted_inverso:
+        if not fabrica_inv or not nome_inv or not pdv_alvo_val or not qtd_inv or not peso_inv or not comp_inv or not larg_inv or not alt_inv:
+            st.error("Preencha todos os campos obrigatórios.")
+        elif pdv_alvo_val <= 0 or qtd_inv <= 0 or peso_inv <= 0 or comp_inv <= 0 or larg_inv <= 0 or alt_inv <= 0:
+            st.error("Os valores informados devem ser maiores que zero.")
+        else:
+            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
+            
+            st.metric(label=f"💵 Preço FOB Máximo Recomendado ({fabrica_inv} - {nome_inv})", value=f"USD ${fob_calculado:.2f}")
+            st.info(f"Com o preço FOB de **USD ${fob_calculado:.2f}**, você consegue vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** mantendo a margem de {margem_alvo*100:.1f}%.")
+            
+            res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
+            salvar_no_google_sheets(fabrica_inv, nome_inv, round(fob_calculado, 2), qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
+            
+            st.subheader("Projeção de PDV para todos os Marketplaces com esse FOB:")
+            st.table(res_tabela)
+
+with tab3:
+    st.subheader("📊 Registros Gravados no Google Sheets")
+    df_sheets = carregar_do_google_sheets()
     
-    if df_historico.empty:
-        st.info("Nenhum produto cadastrado no banco de dados até o momento.")
+    if df_sheets.empty:
+        st.info("Nenhum registro encontrado ou a URL do Google Apps Script ainda não foi configurada.")
     else:
-        # Renomear colunas para apresentação
-        df_display = df_historico.rename(columns={
-            "id": "ID",
-            "data_calculo": "Data",
-            "fabrica": "Fábrica",
-            "nome_produto": "Produto",
-            "fob_usd": "FOB ($)",
-            "qtd": "Qtd Container",
-            "peso_kg": "Peso (kg)",
-            "comprimento_cm": "Comp (cm)",
-            "largura_cm": "Larg (cm)",
-            "altura_cm": "Alt (cm)",
-            "ml_classico_pdv": "ML Clássico (R$)",
-            "ml_premium_pdv": "ML Premium (R$)",
-            "shopee_pdv": "Shopee (R$)",
-            "amazon_pdv": "Amazon (R$)",
-            "magalu_pdv": "Magalu (R$)"
-        })
+        st.dataframe(df_sheets, use_container_width=True)
         
-        # Reorganizar a ordem das colunas para colocar "Fábrica" logo no início
-        cols_ordem = [
-            "ID", "Data", "Fábrica", "Produto", "FOB ($)", "Qtd Container", 
-            "Peso (kg)", "Comp (cm)", "Larg (cm)", "Alt (cm)", 
-            "ML Clássico (R$)", "ML Premium (R$)", "Shopee (R$)", "Amazon (R$)", "Magalu (R$)"
-        ]
-        df_display = df_display[cols_ordem]
-        
-        st.dataframe(df_display, use_container_width=True)
-        
-        # Botão para Baixar CSV
-        csv = df_display.to_csv(index=False).encode('utf-8')
+        csv = df_sheets.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Baixar Histórico em CSV / Excel",
             data=csv,
             file_name="historico_simulacoes_pdv.csv",
             mime="text/csv"
         )
-        
-        st.divider()
-        st.subheader("🗑️ Gerenciar Registros")
-        
-        col_del1, col_del2 = st.columns([2, 1])
-        with col_del1:
-            id_para_deletar = st.number_input("Digite o ID do produto que deseja excluir:", min_value=1, step=1)
-        with col_del2:
-            st.write("")
-            st.write("")
-            if st.button("Excluir Produto"):
-                deletar_registro(id_para_deletar)
-                st.warning(f"Registro ID {id_para_deletar} removido com sucesso!")
-                st.rerun()
