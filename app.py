@@ -34,6 +34,18 @@ def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resu
         st.error(f"Erro ao salvar no Google Sheets: {e}")
         return False
 
+def deletar_do_google_sheets(row_index):
+    payload = {
+        "action": "delete",
+        "row_index": int(row_index)
+    }
+    try:
+        res = requests.post(URL_GOOGLE_SHEETS, json=payload, allow_redirects=True)
+        return res.status_code == 200
+    except Exception as e:
+        st.error(f"Erro ao deletar no Google Sheets: {e}")
+        return False
+
 def carregar_do_google_sheets():
     try:
         res = requests.get(URL_GOOGLE_SHEETS, allow_redirects=True)
@@ -41,8 +53,10 @@ def carregar_do_google_sheets():
             try:
                 data = res.json()
                 if isinstance(data, list) and len(data) > 1:
-                    headers = data[0]
-                    rows = data[1:]
+                    headers = ["ID"] + data[0]
+                    rows = []
+                    for idx, row in enumerate(data[1:], start=2):
+                        rows.append([idx] + row)
                     df = pd.DataFrame(rows, columns=headers)
                     return df.iloc[::-1]  # Inverte para mostrar os registros mais recentes primeiro
             except Exception:
@@ -260,3 +274,19 @@ with tab3:
             file_name="historico_simulacoes_pdv.csv",
             mime="text/csv"
         )
+        
+        st.divider()
+        st.subheader("🗑️ Gerenciar / Excluir Registros")
+        
+        col_del1, col_del2 = st.columns([2, 1])
+        with col_del1:
+            id_para_deletar = st.number_input("Digite o ID do produto que deseja excluir:", min_value=2, step=1)
+        with col_del2:
+            st.write("")
+            st.write("")
+            if st.button("Excluir Produto"):
+                if deletar_do_google_sheets(id_para_deletar):
+                    st.warning(f"Registro ID {id_para_deletar} removido com sucesso da planilha do Google Sheets!")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível excluir o registro. Verifique se atualizou o Apps Script para a 'Nova versão'.")
