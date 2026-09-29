@@ -5,12 +5,14 @@ import requests
 # Configuração da página
 st.set_page_config(page_title="Simulador de Importação & PDV", layout="wide")
 
+# URL do seu Google Apps Script
 URL_GOOGLE_SHEETS = "https://script.google.com/macros/s/AKfycbxrylmS1PozdeKeYqCgfhzuCAd8H8sxiEW_vQwFtMzI4nqykh3ApJmH-DkIs2sv1suW/exec"
+
 st.title("🚢 Simulador de Importação & Preço de Venda (PDV)")
 st.write("Conectado ao Google Sheets para persistência permanente dos dados.")
 
 def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
-    if "SUA_URL_DO_GOOGLE_APPS_SCRIPT" in URL_GOOGLE_SHEETS:
+    if not URL_GOOGLE_SHEETS or "SUA_URL" in URL_GOOGLE_SHEETS:
         st.warning("Insira a URL do seu Google Apps Script no código para salvar na planilha.")
         return False
         
@@ -30,23 +32,27 @@ def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resu
         "magalu_pdv": resultados_dict.get('Magalu')
     }
     try:
-        res = requests.post(URL_GOOGLE_SHEETS, json=payload)
+        res = requests.post(URL_GOOGLE_SHEETS, json=payload, allow_redirects=True)
         return res.status_code == 200
     except Exception as e:
         st.error(f"Erro ao salvar no Google Sheets: {e}")
         return False
 
 def carregar_do_google_sheets():
-    if "SUA_URL_DO_GOOGLE_APPS_SCRIPT" in URL_GOOGLE_SHEETS:
+    if not URL_GOOGLE_SHEETS or "SUA_URL" in URL_GOOGLE_SHEETS:
         return pd.DataFrame()
     try:
-        res = requests.get(URL_GOOGLE_SHEETS)
-        data = res.json()
-        if len(data) > 1:
-            headers = data[0]
-            rows = data[1:]
-            df = pd.DataFrame(rows, columns=headers)
-            return df.iloc[::-1]  # Inverte para mostrar os mais recentes primeiro
+        res = requests.get(URL_GOOGLE_SHEETS, allow_redirects=True)
+        if res.status_code == 200:
+            try:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 1:
+                    headers = data[0]
+                    rows = data[1:]
+                    df = pd.DataFrame(rows, columns=headers)
+                    return df.iloc[::-1]  # Inverte para mostrar os mais recentes primeiro
+            except Exception:
+                st.warning("Aguardando permissão do Google Apps Script. Verifique se o acesso está configurado como 'Qualquer pessoa'.")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Erro ao carregar do Google Sheets: {e}")
