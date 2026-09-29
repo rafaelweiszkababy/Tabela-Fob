@@ -37,7 +37,7 @@ def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resu
     payload = {
         "fabrica": fabrica,
         "nome_produto": nome,
-        "fob_usd": round(fob, 4),
+        "fob_usd": round(fob, 2),
         "qtd": qtd,
         "peso_kg": peso,
         "comprimento_cm": comp,
@@ -80,7 +80,7 @@ def carregar_do_google_sheets():
                     for idx, row in enumerate(data[1:], start=2):
                         rows.append([idx] + row)
                     df = pd.DataFrame(rows, columns=headers)
-                    return df.iloc[::-1]  # Inverte para mostrar os registros mais recentes primeiro
+                    return df.iloc[::-1]
             except Exception:
                 st.warning("Verifique se o Google Apps Script está configurado com permissão de acesso para 'Qualquer pessoa'.")
         return pd.DataFrame()
@@ -119,15 +119,21 @@ def get_frete_ml_g1(peso):
             return valor
     return 116.95
 
-def get_taxas_canal(canal, peso_tarifa, frete_g1):
+def get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=100.0):
     if canal == 'Mercado Livre Clássico':
         tx_mkt = 0.115
-        frete_ml = get_frete_ml_matriz(peso_tarifa)
-        j = -frete_ml - 5.0
+        if pdv_estimado < 79.0:
+            j = -6.0
+        else:
+            frete_ml = get_frete_ml_matriz(peso_tarifa)
+            j = -frete_ml
     elif canal == 'Mercado Livre Premium':
         tx_mkt = 0.165
-        frete_ml = get_frete_ml_matriz(peso_tarifa)
-        j = -frete_ml - 5.0
+        if pdv_estimado < 79.0:
+            j = -6.0
+        else:
+            frete_ml = get_frete_ml_matriz(peso_tarifa)
+            j = -frete_ml
     elif canal == 'Shopee':
         tx_mkt = 0.14
         j = -31.0
@@ -169,9 +175,12 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, fre
     valores_pdv_dict = {}
     
     for canal in canais_nomes:
-        tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
-        denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
-        pdv = (fixed_base - j) / denom
+        pdv = 150.0
+        for _ in range(20):
+            tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=pdv)
+            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+            pdv = (fixed_base - j) / denom
+            
         lucro = pdv * margem
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append({
@@ -190,7 +199,7 @@ def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico,
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
+    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1, pdv_estimado=pdv_alvo)
     
     denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
     fixed_base = (pdv_alvo * denom) + j
@@ -217,16 +226,16 @@ with tab1:
     with st.form("form_produto_direto"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            fabrica_prod = st.text_input("Fábrica (Opcional)", value=None, placeholder="Ex: Fornecedor A", key="fab_dir")
-            nome_prod = st.text_input("Nome/Código do Produto (Opcional)", value=None, placeholder="Ex: Produto X", key="nome_dir")
-            fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 12.50", key="fob_dir")
+            fabrica_prod = st.text_input("Fábrica (Opcional)", value=None, key="fab_dir")
+            nome_prod = st.text_input("Nome/Código do Produto (Opcional)", value=None, key="nome_dir")
+            fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, key="fob_dir")
         with col2:
-            qtd_val = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_dir")
-            peso_val = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 2.5", key="peso_dir")
+            qtd_val = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, key="qtd_dir")
+            peso_val = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, key="peso_dir")
         with col3:
-            comp_val = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 20", key="comp_dir")
-            larg_val = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15", key="larg_dir")
-            alt_val = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10", key="alt_dir")
+            comp_val = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, key="comp_dir")
+            larg_val = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, key="larg_dir")
+            alt_val = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, key="alt_dir")
             
         btn_col1, btn_col2 = st.columns([3, 1])
         with btn_col1:
@@ -255,17 +264,17 @@ with tab2:
     with st.form("form_produto_inverso"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            fabrica_inv = st.text_input("Fábrica (Opcional)", value=None, placeholder="Ex: Fornecedor A", key="fab_inv")
-            nome_inv = st.text_input("Nome/Código do Produto (Opcional)", value=None, placeholder="Ex: Produto X", key="nome_inv")
-            pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, placeholder="Ex: 150.00", key="pdv_inv")
+            fabrica_inv = st.text_input("Fábrica (Opcional)", value=None, key="fab_inv")
+            nome_inv = st.text_input("Nome/Código do Produto (Opcional)", value=None, key="nome_inv")
+            pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, key="pdv_inv")
             canal_ref = st.selectbox("Marketplace de Referência", ['Mercado Livre Clássico', 'Mercado Livre Premium', 'Shopee', 'Amazon', 'Magalu'])
         with col2:
-            qtd_inv = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_inv")
-            peso_inv = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 2.5", key="peso_inv")
+            qtd_inv = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, key="qtd_inv")
+            peso_inv = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, key="peso_inv")
         with col3:
-            comp_inv = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 20", key="comp_inv")
-            larg_inv = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15", key="larg_inv")
-            alt_inv = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10", key="alt_inv")
+            comp_inv = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, key="comp_inv")
+            larg_inv = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, key="larg_inv")
+            alt_inv = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, key="alt_inv")
             
         btn_col1, btn_col2 = st.columns([3, 1])
         with btn_col1:
@@ -287,15 +296,9 @@ with tab2:
             if fob_calculado <= 0:
                 st.warning("O PDV desejado é muito baixo para cobrir os custos fixos de logística e impostos. Aumente o PDV alvo.")
             else:
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.metric(label=f"💵 FOB Máximo Exato (4 Casas)", value=f"USD ${fob_calculado:.4f}")
-                with col_m2:
-                    st.metric(label=f"💵 FOB Máximo Arredondado (2 Casas)", value=f"USD ${fob_calculado:.2f}")
+                st.metric(label=f"💵 Preço FOB Máximo Recomendado ({fab_inv_final} - {nome_inv_final})", value=f"USD ${fob_calculado:.2f}")
+                st.info(f"Para vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** mantendo a margem de **{margem_alvo*100:.1f}%**, o preço FOB máximo a negociar com a fábrica é **USD ${fob_calculado:.2f}**.")
                 
-                st.info(f"Para vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** com margem de **{margem_alvo*100:.1f}%**, o preço FOB máximo a negociar com a fábrica é **USD ${fob_calculado:.4f}**.")
-                
-                # Projeção utilizando o FOB exato para garantir que o marketplace de referência bata o PDV exato
                 res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
                 salvar_no_google_sheets(fab_inv_final, nome_inv_final, fob_calculado, qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
                 
