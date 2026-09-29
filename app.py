@@ -11,6 +11,28 @@ URL_GOOGLE_SHEETS = "https://script.google.com/macros/s/AKfycbxry1mS1PozdeKeYqCg
 st.title("🚢 Simulador de Importação & Preço de Venda (PDV)")
 st.write("Conectado ao Google Sheets para persistência permanente dos dados.")
 
+# --- FUNÇÕES DE RESET DE FORMULÁRIO ---
+def reset_tab1():
+    st.session_state["fab_dir"] = None
+    st.session_state["nome_dir"] = None
+    st.session_state["fob_dir"] = None
+    st.session_state["qtd_dir"] = None
+    st.session_state["peso_dir"] = None
+    st.session_state["comp_dir"] = None
+    st.session_state["larg_dir"] = None
+    st.session_state["alt_dir"] = None
+
+def reset_tab2():
+    st.session_state["fab_inv"] = None
+    st.session_state["nome_inv"] = None
+    st.session_state["pdv_inv"] = None
+    st.session_state["qtd_inv"] = None
+    st.session_state["peso_inv"] = None
+    st.session_state["comp_inv"] = None
+    st.session_state["larg_inv"] = None
+    st.session_state["alt_inv"] = None
+
+# --- INTEGRAÇÃO GOOGLE SHEETS ---
 def salvar_no_google_sheets(fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict):
     payload = {
         "fabrica": fabrica,
@@ -196,18 +218,22 @@ with tab1:
     with st.form("form_produto_direto"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            fabrica_prod = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A")
-            nome_prod = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X")
-            fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 12.50")
+            fabrica_prod = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A", key="fab_dir")
+            nome_prod = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X", key="nome_dir")
+            fob_val = st.number_input("Preço FOB (USD)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 12.50", key="fob_dir")
         with col2:
-            qtd_val = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000")
-            peso_val = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 2.5")
+            qtd_val = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_dir")
+            peso_val = st.number_input("Peso Físico (kg)", min_value=0.0, value=None, step=0.5, placeholder="Ex: 2.5", key="peso_dir")
         with col3:
-            comp_val = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 20")
-            larg_val = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15")
-            alt_val = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10")
+            comp_val = st.number_input("Comprimento (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 20", key="comp_dir")
+            larg_val = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15", key="larg_dir")
+            alt_val = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10", key="alt_dir")
             
-        submitted_direto = st.form_submit_button("Calcular e Salvar na Planilha")
+        btn_col1, btn_col2 = st.columns([3, 1])
+        with btn_col1:
+            submitted_direto = st.form_submit_button("Calcular e Salvar na Planilha")
+        with btn_col2:
+            st.form_submit_button("🧹 Limpar Campos", on_click=reset_tab1)
 
     if submitted_direto:
         if not fabrica_prod or not nome_prod or not fob_val or not qtd_val or not peso_val or not comp_val or not larg_val or not alt_val:
@@ -229,7 +255,7 @@ with tab2:
         with col1:
             fabrica_inv = st.text_input("Fábrica", value=None, placeholder="Ex: Fornecedor A", key="fab_inv")
             nome_inv = st.text_input("Nome/Código do Produto", value=None, placeholder="Ex: Produto X", key="nome_inv")
-            pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, placeholder="Ex: 150.00")
+            pdv_alvo_val = st.number_input("PDV Desejado (R$)", min_value=0.0, value=None, step=5.0, placeholder="Ex: 150.00", key="pdv_inv")
             canal_ref = st.selectbox("Marketplace de Referência", ['Mercado Livre Clássico', 'Mercado Livre Premium', 'Shopee', 'Amazon', 'Magalu'])
         with col2:
             qtd_inv = st.number_input("Quantidade no Container", min_value=0, value=None, step=50, placeholder="Ex: 5000", key="qtd_inv")
@@ -239,7 +265,11 @@ with tab2:
             larg_inv = st.number_input("Largura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 15", key="larg_inv")
             alt_inv = st.number_input("Altura (cm)", min_value=0.0, value=None, step=1.0, placeholder="Ex: 10", key="alt_inv")
             
-        submitted_inverso = st.form_submit_button("Calcular Preço FOB Máximo")
+        btn_col1, btn_col2 = st.columns([3, 1])
+        with btn_col1:
+            submitted_inverso = st.form_submit_button("Calcular Preço FOB Máximo")
+        with btn_col2:
+            st.form_submit_button("🧹 Limpar Campos", on_click=reset_tab2)
 
     if submitted_inverso:
         if not fabrica_inv or not nome_inv or not pdv_alvo_val or not qtd_inv or not peso_inv or not comp_inv or not larg_inv or not alt_inv:
