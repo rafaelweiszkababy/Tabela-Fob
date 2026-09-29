@@ -101,11 +101,10 @@ EXCEL_ML_TABLE_VALUES = [
 ]
 
 def get_frete_ml_matriz(peso_tarifa):
-    w_idx = 0
-    for i, w in enumerate(WEIGHT_ROWS):
-        if peso_tarifa >= w:
-            w_idx = i
-    return EXCEL_ML_TABLE_VALUES[w_idx]
+    for w, val in zip(WEIGHT_ROWS, EXCEL_ML_TABLE_VALUES):
+        if peso_tarifa <= w:
+            return val
+    return EXCEL_ML_TABLE_VALUES[-1]
 
 FRETE_ML_G1_TABELA = [
     (0.3, 19.95), (0.5, 20.45), (1.0, 21.45), (2.0, 22.95), (3.0, 23.95),
@@ -119,21 +118,15 @@ def get_frete_ml_g1(peso):
             return valor
     return 116.95
 
-def get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=100.0):
+def get_taxas_canal(canal, peso_tarifa, frete_g1):
     if canal == 'Mercado Livre Clássico':
         tx_mkt = 0.115
-        if pdv_estimado < 79.0:
-            j = -6.0
-        else:
-            frete_ml = get_frete_ml_matriz(peso_tarifa)
-            j = -frete_ml
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
     elif canal == 'Mercado Livre Premium':
         tx_mkt = 0.165
-        if pdv_estimado < 79.0:
-            j = -6.0
-        else:
-            frete_ml = get_frete_ml_matriz(peso_tarifa)
-            j = -frete_ml
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j = -frete_ml - 5.0
     elif canal == 'Shopee':
         tx_mkt = 0.14
         j = -31.0
@@ -175,12 +168,9 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio=taxa_cambio, fre
     valores_pdv_dict = {}
     
     for canal in canais_nomes:
-        pdv = 150.0
-        for _ in range(20):
-            tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1, pdv_estimado=pdv)
-            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
-            pdv = (fixed_base - j) / denom
-            
+        tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
+        denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+        pdv = (fixed_base - j) / denom
         lucro = pdv * margem
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append({
@@ -199,7 +189,7 @@ def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico,
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1, pdv_estimado=pdv_alvo)
+    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
     
     denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
     fixed_base = (pdv_alvo * denom) + j
