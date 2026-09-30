@@ -80,7 +80,7 @@ def carregar_do_google_sheets():
                     for idx, row in enumerate(data[1:], start=2):
                         rows.append([idx] + row)
                     df = pd.DataFrame(rows, columns=headers)
-                    return df.iloc[::-1]  # Inverte para mostrar os registros mais recentes primeiro
+                    return df.iloc[::-1]
             except Exception:
                 st.warning("Verifique se o Google Apps Script está configurado com permissão de acesso para 'Qualquer pessoa'.")
         return pd.DataFrame()
@@ -119,35 +119,45 @@ def get_frete_ml_g1(peso):
             return valor
     return 116.95
 
-def get_taxas_canal(canal, peso_tarifa, frete_g1):
-    # Restaurado estritamente para a sua lógica original aprovada
+# --- MÓDULO EXCLUSIVO REVISADO: MERCADO LIVRE CLÁSSICO E PREMIUM ---
+def calcular_taxas_mercado_livre(canal, peso_tarifa):
+    """
+    Módulo dedicado e isolado para o cálculo exato do Mercado Livre (Clássico e Premium).
+    - Clássico: Comissão de 11.5% + Frete de Matriz + R$ 5.00 de taxa fixa
+    - Premium: Comissão de 16.5% + Frete de Matriz + R$ 5.00 de taxa fixa
+    """
+    frete_ml = get_frete_ml_matriz(peso_tarifa)
+    
     if canal == 'Mercado Livre Clássico':
-        tx_mkt = 0.115
-        frete_ml = get_frete_ml_matriz(peso_tarifa)
-        j = -frete_ml - 5.0
+        comissao = 0.115
     elif canal == 'Mercado Livre Premium':
-        tx_mkt = 0.165
-        frete_ml = get_frete_ml_matriz(peso_tarifa)
-        j = -frete_ml - 5.0
+        comissao = 0.165
+    else:
+        raise ValueError("Canal inválido para o módulo do Mercado Livre.")
+        
+    # Custos operacionais e logísticos agrupados (j)
+    j_despesa = -frete_ml - 5.0
+    return comissao, j_despesa
+
+def get_taxas_canal(canal, peso_tarifa, frete_g1):
+    if canal in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
+        return calcular_taxas_mercado_livre(canal, peso_tarifa)
     elif canal == 'Shopee':
-        tx_mkt = 0.14
-        j = -31.0
+        return 0.14, -31.0
     elif canal == 'Amazon':
-        tx_mkt = 0.12
-        j = -5.5 - frete_g1
+        return 0.12, -5.5 - frete_g1
     elif canal == 'Magalu':
-        tx_mkt = 0.18
-        j = -5.0 - frete_g1
-    return tx_mkt, j
+        return 0.18, -5.0 - frete_g1
+    return 0.0, 0.0
 
 # --- CÁLCULO DIRETO (FOB -> PDV) ---
-def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
+def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio, frete_mar, margem):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    valor_fob_total = fob * qtd * taxa_cambio
-    frete_brl = frete_maritimo * taxa_cambio
+    valor_fob_total = fob * qtd * cambio
+    frete_brl = frete_mar * cambio
     valor_aduaneiro = valor_fob_total + frete_brl + 80.0
     
     ii = 0.20 * valor_aduaneiro
@@ -158,7 +168,7 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
     icms_imp = (valor_aduaneiro + ii + ipi + pis + cofins + afrmm + siscomex) / (1 - 0.18) * 0.18
     
     total_importacao = valor_aduaneiro + ii + ipi + pis + cofins + icms_imp + despesas_log
@@ -171,13 +181,10 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
     
     for canal in canais_nomes:
         tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
-        pdv = 300.0
-        # A sua mesma iteração de precisão original foi restaurada aqui
-        for _ in range(20):
-            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
-            pdv = (fixed_base - j) / denom
-            
-        lucro = pdv * margem_alvo
+        denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+        pdv = (fixed_base - j) / denom
+        
+        lucro = pdv * margem
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append({
             "Marketplace": canal,
@@ -185,32 +192,32 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico):
             "Frete / Taxa Fixa": f"R$ {j:.2f}",
             "PDV Recomendado": f"R$ {pdv:.2f}",
             "Lucro Unitário": f"R$ {lucro:.2f}",
-            "Margem Resultante": f"{margem_alvo*100:.1f}%"
+            "Margem Resultante": f"{margem*100:.1f}%"
         })
     return resultados, valores_pdv_dict
 
 # --- CÁLCULO INVERSO (PDV -> TARGET FOB) ---
-def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico):
+def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico, cambio, frete_mar, margem):
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
     tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
     
-    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem_alvo)
+    denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
     fixed_base = (pdv_alvo * denom) + j
     custo_base = fixed_base - 2.0
     
-    frete_brl = frete_maritimo * taxa_cambio
+    frete_brl = frete_mar * cambio
     thc = 998.0
     siscomex = 154.23
     afrmm = 0.08 * (frete_brl + thc) + 21.20
-    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * taxa_cambio) + 4000.0 + siscomex
+    despesas_log = afrmm + 1900.0 + thc + 1800.0 + 650.0 + (50.0 * cambio) + 4000.0 + siscomex
     
     custo_total_base = custo_base * qtd
     valor_aduaneiro = (custo_total_base - despesas_log) / 1.20
     fob_total_brl = valor_aduaneiro - frete_brl - 80.0
-    fob_usd_max = fob_total_brl / (qtd * taxa_cambio)
+    fob_usd_max = fob_total_brl / (qtd * cambio)
     
     return max(0.0, fob_usd_max)
 
@@ -248,7 +255,7 @@ with tab1:
             fab_final = fabrica_prod.strip() if (fabrica_prod and fabrica_prod.strip()) else "Não informada"
             nome_final = nome_prod.strip() if (nome_prod and nome_prod.strip()) else "Sem nome"
             
-            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val)
+            res_tabela, pdv_dict = calcular_pdv(fob_val, qtd_val, comp_val, larg_val, alt_val, peso_val, taxa_cambio, frete_maritimo, margem_alvo)
             ok = salvar_no_google_sheets(fab_final, nome_final, fob_val, qtd_val, peso_val, comp_val, larg_val, alt_val, pdv_dict)
             if ok:
                 st.success("Cálculo realizado e salvo na planilha do Google Sheets com sucesso!")
@@ -287,8 +294,7 @@ with tab2:
             fab_inv_final = fabrica_inv.strip() if (fabrica_inv and fabrica_inv.strip()) else "Não informada"
             nome_inv_final = nome_inv.strip() if (nome_inv and nome_inv.strip()) else "Sem nome"
             
-            # Aqui calculamos o FOB a partir do PDV exato
-            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
+            fob_calculado = calcular_fob_inverso(pdv_alvo_val, canal_ref, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
             
             if fob_calculado <= 0:
                 st.warning("O PDV desejado é muito baixo para cobrir os custos logísticos (o FOB ficou negativo). Aumente o PDV alvo.")
@@ -296,8 +302,7 @@ with tab2:
                 st.metric(label=f"💵 Preço FOB Máximo Recomendado ({fab_inv_final} - {nome_inv_final})", value=f"USD ${fob_calculado:.2f}")
                 st.info(f"Para vender no **{canal_ref}** por **R$ {pdv_alvo_val:.2f}** mantendo a margem de **{margem_alvo*100:.1f}%**, o preço FOB máximo a negociar com a fábrica é **USD ${fob_calculado:.2f}**.")
                 
-                # E agora passamos o fob_calculado para re-exibir a tabela inteira!
-                res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv)
+                res_tabela, pdv_dict = calcular_pdv(fob_calculado, qtd_inv, comp_inv, larg_inv, alt_inv, peso_inv, taxa_cambio, frete_maritimo, margem_alvo)
                 
                 salvar_no_google_sheets(fab_inv_final, nome_inv_final, fob_calculado, qtd_inv, peso_inv, comp_inv, larg_inv, alt_inv, pdv_dict)
                 
@@ -322,7 +327,7 @@ with tab3:
         )
         
         st.divider()
-        st.subheader("🗑️ Gerenciar / Excluir Registros")
+        st.subheader("🗑️️ Gerenciar / Excluir Registros")
         
         col_del1, col_del2 = st.columns([2, 1])
         with col_del1:
