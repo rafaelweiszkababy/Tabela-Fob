@@ -120,14 +120,10 @@ def get_frete_ml_g1(peso):
     return 116.95
 
 # --- MÓDULO EXCLUSIVO REVISADO: MERCADO LIVRE CLÁSSICO E PREMIUM ---
-def calcular_taxas_mercado_livre(canal, peso_tarifa):
+def calcular_taxas_mercado_livre_inverso(canal, peso_tarifa, pdv_alvo):
     """
-    Módulo dedicado e isolado para o cálculo exato do Mercado Livre (Clássico e Premium).
-    - Clássico: Comissão de 11.5% + Frete de Matriz + R$ 5.00 de taxa fixa
-    - Premium: Comissão de 16.5% + Frete de Matriz + R$ 5.00 de taxa fixa
+    Função dedicada ao CÁLCULO INVERSO (onde já sabemos o PDV Desejado do usuário).
     """
-    frete_ml = get_frete_ml_matriz(peso_tarifa)
-    
     if canal == 'Mercado Livre Clássico':
         comissao = 0.115
     elif canal == 'Mercado Livre Premium':
@@ -135,14 +131,16 @@ def calcular_taxas_mercado_livre(canal, peso_tarifa):
     else:
         raise ValueError("Canal inválido para o módulo do Mercado Livre.")
         
-    # Custos operacionais e logísticos agrupados (j)
-    j_despesa = -frete_ml - 5.0
+    if pdv_alvo < 79.0:
+        j_despesa = -6.0  # Abaixo de 79 reais, só paga a taxa fixa
+    else:
+        frete_ml = get_frete_ml_matriz(peso_tarifa)
+        j_despesa = -frete_ml  # Acima de 79 reais, só paga o frete grátis
+        
     return comissao, j_despesa
 
-def get_taxas_canal(canal, peso_tarifa, frete_g1):
-    if canal in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
-        return calcular_taxas_mercado_livre(canal, peso_tarifa)
-    elif canal == 'Shopee':
+def get_taxas_outros_canais(canal, frete_g1):
+    if canal == 'Shopee':
         return 0.14, -31.0
     elif canal == 'Amazon':
         return 0.12, -5.5 - frete_g1
@@ -180,9 +178,29 @@ def calcular_pdv(fob, qtd, comp, larg, alt, peso_fisico, cambio, frete_mar, marg
     valores_pdv_dict = {}
     
     for canal in canais_nomes:
-        tx_mkt, j = get_taxas_canal(canal, peso_tarifa, frete_g1)
-        denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
-        pdv = (fixed_base - j) / denom
+        if canal in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
+            # LÓGICA DE DUPLA HIPÓTESE PARA O ML NO CÁLCULO DIRETO
+            comissao = 0.115 if canal == 'Mercado Livre Clássico' else 0.165
+            frete_ml = get_frete_ml_matriz(peso_tarifa)
+            divisor = (1.0 - comissao - 0.0925 - 0.18 - margem)
+            
+            # Hipótese 1: O preço final vai dar menos de 79 reais
+            pdv_hipotese_abaixo = (fixed_base - (-6.0)) / divisor
+            # Hipótese 2: O preço final vai dar 79 reais ou mais
+            pdv_hipotese_acima = (fixed_base - (-frete_ml)) / divisor
+            
+            if pdv_hipotese_abaixo < 79.0:
+                pdv = pdv_hipotese_abaixo
+                j = -6.0
+                tx_mkt = comissao
+            else:
+                pdv = pdv_hipotese_acima
+                j = -frete_ml
+                tx_mkt = comissao
+        else:
+            tx_mkt, j = get_taxas_outros_canais(canal, frete_g1)
+            denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
+            pdv = (fixed_base - j) / denom
         
         lucro = pdv * margem
         valores_pdv_dict[canal] = round(pdv, 2)
@@ -202,7 +220,10 @@ def calcular_fob_inverso(pdv_alvo, canal_ref, qtd, comp, larg, alt, peso_fisico,
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
     
-    tx_mkt, j = get_taxas_canal(canal_ref, peso_tarifa, frete_g1)
+    if canal_ref in ['Mercado Livre Clássico', 'Mercado Livre Premium']:
+        tx_mkt, j = calcular_taxas_mercado_livre_inverso(canal_ref, peso_tarifa, pdv_alvo)
+    else:
+        tx_mkt, j = get_taxas_outros_canais(canal_ref, frete_g1)
     
     denom = (1.0 - tx_mkt - 0.0925 - 0.18 - margem)
     fixed_base = (pdv_alvo * denom) + j
@@ -327,7 +348,7 @@ with tab3:
         )
         
         st.divider()
-        st.subheader("🗑️️ Gerenciar / Excluir Registros")
+        st.subheader("🗑 Gerenciar / Excluir Registros")
         
         col_del1, col_del2 = st.columns([2, 1])
         with col_del1:
