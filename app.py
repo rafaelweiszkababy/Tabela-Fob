@@ -870,14 +870,6 @@ with tab1:
                 key="alt_dir",
             )
 
-        canais_salvar_direto = st.multiselect(
-            "💾 Quais cálculos deseja salvar no histórico?",
-            options=CANAIS_DISPONIVEIS,
-            default=CANAIS_DISPONIVEIS,
-            key="canais_salvar_direto",
-            help="Todos os marketplaces continuam sendo calculados e mostrados. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
-        )
-
         btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
         with btn_col1:
@@ -912,11 +904,6 @@ with tab1:
         if any(v is None for v in campos):
             st.error(
                 "Preencha todos os campos numéricos obrigatórios para realizar o cálculo."
-            )
-
-        elif salvar_direto and not canais_salvar_direto:
-            st.error(
-                "Selecione pelo menos um marketplace para salvar no histórico."
             )
 
         elif any(float(v) <= 0 for v in campos):
@@ -960,7 +947,7 @@ with tab1:
                         larg_val,
                         alt_val,
                         pdv_dict,
-                        canais_salvar=canais_salvar_direto,
+                        canais_salvar=CANAIS_DISPONIVEIS,
                     )
 
                     if ok:
@@ -1063,14 +1050,6 @@ with tab2:
                 key="alt_inv",
             )
 
-        canais_salvar_inverso = st.multiselect(
-            "💾 Quais cálculos deseja salvar no histórico?",
-            options=CANAIS_DISPONIVEIS,
-            default=CANAIS_DISPONIVEIS,
-            key="canais_salvar_inverso",
-            help="A projeção de todos os marketplaces continua sendo exibida. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
-        )
-
         btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
         with btn_col1:
@@ -1104,11 +1083,6 @@ with tab2:
 
         if any(v is None for v in campos):
             st.error("Preencha todos os campos numéricos obrigatórios.")
-
-        elif salvar_inverso and not canais_salvar_inverso:
-            st.error(
-                "Selecione pelo menos um marketplace para salvar no histórico."
-            )
 
         elif any(float(v) <= 0 for v in campos):
             st.error("Os valores numéricos devem ser maiores que zero.")
@@ -1197,7 +1171,7 @@ with tab2:
                             larg_inv,
                             alt_inv,
                             pdv_dict,
-                            canais_salvar=canais_salvar_inverso,
+                            canais_salvar=CANAIS_DISPONIVEIS,
                         )
 
                         if ok:
