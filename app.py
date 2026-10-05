@@ -134,6 +134,22 @@ SHOPEE_FAIXAS = [
     (500.00, float("inf"), 0.14, 26.00),
 ]
 
+CANAIS_DISPONIVEIS = [
+    "Mercado Livre Clássico",
+    "Mercado Livre Premium",
+    "Shopee",
+    "Amazon",
+    "Magalu",
+]
+
+MAPA_COLUNAS_SALVAMENTO = {
+    "Mercado Livre Clássico": "ml_classico_pdv",
+    "Mercado Livre Premium": "ml_premium_pdv",
+    "Shopee": "shopee_pdv",
+    "Amazon": "amazon_pdv",
+    "Magalu": "magalu_pdv",
+}
+
 # ============================================================
 # FUNÇÕES DE FORMULÁRIO / RESET
 # ============================================================
@@ -162,8 +178,12 @@ def reset_tab2():
 # GOOGLE SHEETS
 # ============================================================
 def salvar_no_google_sheets(
-    fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict
+    fabrica, nome, fob, qtd, peso, comp, larg, alt, resultados_dict, canais_salvar=None
 ):
+    if canais_salvar is None:
+        canais_salvar = list(CANAIS_DISPONIVEIS)
+    canais_salvar = set(canais_salvar)
+
     payload = {
         "fabrica": fabrica,
         "nome_produto": nome,
@@ -173,11 +193,11 @@ def salvar_no_google_sheets(
         "comprimento_cm": float(comp),
         "largura_cm": float(larg),
         "altura_cm": float(alt),
-        "ml_classico_pdv": resultados_dict.get("Mercado Livre Clássico"),
-        "ml_premium_pdv": resultados_dict.get("Mercado Livre Premium"),
-        "shopee_pdv": resultados_dict.get("Shopee"),
-        "amazon_pdv": resultados_dict.get("Amazon"),
-        "magalu_pdv": resultados_dict.get("Magalu"),
+        "ml_classico_pdv": resultados_dict.get("Mercado Livre Clássico") if "Mercado Livre Clássico" in canais_salvar else None,
+        "ml_premium_pdv": resultados_dict.get("Mercado Livre Premium") if "Mercado Livre Premium" in canais_salvar else None,
+        "shopee_pdv": resultados_dict.get("Shopee") if "Shopee" in canais_salvar else None,
+        "amazon_pdv": resultados_dict.get("Amazon") if "Amazon" in canais_salvar else None,
+        "magalu_pdv": resultados_dict.get("Magalu") if "Magalu" in canais_salvar else None,
     }
 
     try:
@@ -210,6 +230,23 @@ def deletar_do_google_sheets(row_index):
     except requests.RequestException as e:
         st.error(f"Erro ao deletar no Google Sheets: {e}")
         return False
+
+
+def deletar_varios_do_google_sheets(row_indices):
+    """Exclui vários registros em uma única ação do usuário.
+
+    As linhas são processadas da maior para a menor para que a exclusão
+    de uma linha não altere o índice das linhas ainda pendentes.
+    """
+    sucesso = True
+    erros = []
+
+    for row_index in sorted({int(i) for i in row_indices}, reverse=True):
+        if not deletar_do_google_sheets(row_index):
+            sucesso = False
+            erros.append(row_index)
+
+    return sucesso, erros
 
 
 def carregar_do_google_sheets():
@@ -600,7 +637,6 @@ def calcular_pdv(
                 "Marketplace": canal,
                 "Comissão": f"{tx_mkt * 100:.1f}%",
                 "Frete / Taxas Fixas": f"R$ {custo_fixo_marketplace:.2f}",
-                "Detalhe": detalhe_taxa,
                 "PDV Recomendado": f"R$ {pdv:.2f}",
                 "Lucro Unitário": f"R$ {lucro:.2f}",
                 "Margem Resultante": f"{margem * 100:.1f}%",
@@ -834,6 +870,14 @@ with tab1:
                 key="alt_dir",
             )
 
+        canais_salvar_direto = st.multiselect(
+            "💾 Quais cálculos deseja salvar no histórico?",
+            options=CANAIS_DISPONIVEIS,
+            default=CANAIS_DISPONIVEIS,
+            key="canais_salvar_direto",
+            help="Todos os marketplaces continuam sendo calculados e mostrados. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
+        )
+
         btn_col1, btn_col2 = st.columns([3, 1])
 
         with btn_col1:
@@ -861,6 +905,9 @@ with tab1:
             st.error(
                 "Preencha todos os campos numéricos obrigatórios para realizar o cálculo."
             )
+
+        elif not canais_salvar_direto:
+            st.error("Selecione pelo menos um cálculo para salvar no histórico.")
 
         elif any(float(v) <= 0 for v in campos):
             st.error("Os valores numéricos devem ser maiores que zero.")
@@ -900,6 +947,7 @@ with tab1:
                     larg_val,
                     alt_val,
                     pdv_dict,
+                    canais_salvar=canais_salvar_direto,
                 )
 
                 if ok:
@@ -998,6 +1046,14 @@ with tab2:
                 key="alt_inv",
             )
 
+        canais_salvar_inverso = st.multiselect(
+            "💾 Quais cálculos deseja salvar no histórico?",
+            options=CANAIS_DISPONIVEIS,
+            default=CANAIS_DISPONIVEIS,
+            key="canais_salvar_inverso",
+            help="A projeção de todos os marketplaces continua sendo exibida. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
+        )
+
         btn_col1, btn_col2 = st.columns([3, 1])
 
         with btn_col1:
@@ -1023,6 +1079,9 @@ with tab2:
 
         if any(v is None for v in campos):
             st.error("Preencha todos os campos numéricos obrigatórios.")
+
+        elif not canais_salvar_inverso:
+            st.error("Selecione pelo menos um cálculo para salvar no histórico.")
 
         elif any(float(v) <= 0 for v in campos):
             st.error("Os valores numéricos devem ser maiores que zero.")
@@ -1108,6 +1167,7 @@ with tab2:
                         larg_inv,
                         alt_inv,
                         pdv_dict,
+                        canais_salvar=canais_salvar_inverso,
                     )
 
                     if not ok:
@@ -1149,29 +1209,46 @@ with tab3:
 
         st.divider()
         st.subheader("🗑 Gerenciar / Excluir Registros")
+        st.caption(
+            "Selecione um ou vários registros abaixo e clique uma única vez em "
+            '"Excluir selecionados". Os registros são removidos em ordem segura para preservar os IDs.'
+        )
+
+        ids_disponiveis = df_sheets["ID"].astype(int).tolist() if "ID" in df_sheets.columns else []
+
+        ids_selecionados = st.multiselect(
+            "Registros que deseja excluir:",
+            options=ids_disponiveis,
+            format_func=lambda x: (
+                f"ID {x} — "
+                f"{df_sheets.loc[df_sheets['ID'] == x, 'nome_produto'].iloc[0]}"
+                if "nome_produto" in df_sheets.columns and not df_sheets.loc[df_sheets['ID'] == x].empty
+                else f"ID {x}"
+            ),
+            key="ids_para_deletar",
+        )
 
         col_del1, col_del2 = st.columns([2, 1])
-
         with col_del1:
-            id_para_deletar = st.number_input(
-                "Digite o ID do produto que deseja excluir:",
-                min_value=2,
-                step=1,
+            st.write(
+                f"**{len(ids_selecionados)} registro(s) selecionado(s).**"
             )
-
         with col_del2:
-            st.write("")
-            st.write("")
+            if st.button(
+                "🗑️ Excluir selecionados",
+                type="primary",
+                disabled=not ids_selecionados,
+                use_container_width=True,
+            ):
+                sucesso, erros = deletar_varios_do_google_sheets(ids_selecionados)
 
-            if st.button("Excluir Produto"):
-                if deletar_do_google_sheets(id_para_deletar):
-                    st.warning(
-                        f"Registro ID {id_para_deletar} removido com sucesso da "
-                        "planilha do Google Sheets!"
+                if sucesso:
+                    st.success(
+                        f"{len(ids_selecionados)} registro(s) removido(s) com sucesso!"
                     )
                     st.rerun()
                 else:
                     st.error(
-                        "Não foi possível excluir o registro. Verifique se atualizou "
-                        "o Apps Script para a 'Nova versão'."
+                        "Não foi possível remover todos os registros. "
+                        f"IDs com erro: {', '.join(map(str, erros))}."
                     )
