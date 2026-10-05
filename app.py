@@ -878,20 +878,28 @@ with tab1:
             help="Todos os marketplaces continuam sendo calculados e mostrados. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
         )
 
-        btn_col1, btn_col2 = st.columns([3, 1])
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
         with btn_col1:
-            submitted_direto = st.form_submit_button(
-                "Calcular e Salvar na Planilha"
+            calcular_direto = st.form_submit_button(
+                "🧮 Calcular",
+                use_container_width=True,
             )
 
         with btn_col2:
+            salvar_direto = st.form_submit_button(
+                "💾 Calcular e Salvar",
+                use_container_width=True,
+            )
+
+        with btn_col3:
             st.form_submit_button(
                 "🧹 Limpar Campos",
                 on_click=reset_tab1,
+                use_container_width=True,
             )
 
-    if submitted_direto:
+    if calcular_direto or salvar_direto:
         campos = [
             fob_val,
             qtd_val,
@@ -906,8 +914,10 @@ with tab1:
                 "Preencha todos os campos numéricos obrigatórios para realizar o cálculo."
             )
 
-        elif not canais_salvar_direto:
-            st.error("Selecione pelo menos um cálculo para salvar no histórico.")
+        elif salvar_direto and not canais_salvar_direto:
+            st.error(
+                "Selecione pelo menos um marketplace para salvar no histórico."
+            )
 
         elif any(float(v) <= 0 for v in campos):
             st.error("Os valores numéricos devem ser maiores que zero.")
@@ -937,26 +947,33 @@ with tab1:
                     margem=margem_alvo,
                 )
 
-                ok = salvar_no_google_sheets(
-                    fab_final,
-                    nome_final,
-                    fob_val,
-                    qtd_val,
-                    peso_val,
-                    comp_val,
-                    larg_val,
-                    alt_val,
-                    pdv_dict,
-                    canais_salvar=canais_salvar_direto,
-                )
-
-                if ok:
-                    st.success(
-                        "Cálculo realizado e salvo na planilha do Google Sheets com sucesso!"
+                # O botão "Calcular" NUNCA grava no Google Sheets.
+                # Somente "Calcular e Salvar" executa o salvamento.
+                if salvar_direto:
+                    ok = salvar_no_google_sheets(
+                        fab_final,
+                        nome_final,
+                        fob_val,
+                        qtd_val,
+                        peso_val,
+                        comp_val,
+                        larg_val,
+                        alt_val,
+                        pdv_dict,
+                        canais_salvar=canais_salvar_direto,
                     )
+
+                    if ok:
+                        st.success(
+                            "Cálculo realizado e salvo na planilha do Google Sheets com sucesso!"
+                        )
+                    else:
+                        st.warning(
+                            "Cálculo realizado, mas não foi possível confirmar o salvamento no Google Sheets."
+                        )
                 else:
-                    st.warning(
-                        "Cálculo realizado, mas não foi possível confirmar o salvamento no Google Sheets."
+                    st.info(
+                        "Cálculo realizado. O resultado não foi salvo no histórico."
                     )
 
                 st.subheader(
@@ -1054,20 +1071,28 @@ with tab2:
             help="A projeção de todos os marketplaces continua sendo exibida. Esta opção define apenas quais resultados serão gravados no Google Sheets.",
         )
 
-        btn_col1, btn_col2 = st.columns([3, 1])
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
         with btn_col1:
-            submitted_inverso = st.form_submit_button(
-                "Calcular Preço FOB Máximo"
+            calcular_inverso = st.form_submit_button(
+                "🧮 Calcular",
+                use_container_width=True,
             )
 
         with btn_col2:
+            salvar_inverso = st.form_submit_button(
+                "💾 Calcular e Salvar",
+                use_container_width=True,
+            )
+
+        with btn_col3:
             st.form_submit_button(
                 "🧹 Limpar Campos",
                 on_click=reset_tab2,
+                use_container_width=True,
             )
 
-    if submitted_inverso:
+    if calcular_inverso or salvar_inverso:
         campos = [
             pdv_alvo_val,
             qtd_inv,
@@ -1080,8 +1105,10 @@ with tab2:
         if any(v is None for v in campos):
             st.error("Preencha todos os campos numéricos obrigatórios.")
 
-        elif not canais_salvar_inverso:
-            st.error("Selecione pelo menos um cálculo para salvar no histórico.")
+        elif salvar_inverso and not canais_salvar_inverso:
+            st.error(
+                "Selecione pelo menos um marketplace para salvar no histórico."
+            )
 
         elif any(float(v) <= 0 for v in campos):
             st.error("Os valores numéricos devem ser maiores que zero.")
@@ -1157,23 +1184,34 @@ with tab2:
                         margem=margem_alvo,
                     )
 
-                    ok = salvar_no_google_sheets(
-                        fab_inv_final,
-                        nome_inv_final,
-                        fob_calculado,
-                        qtd_inv,
-                        peso_inv,
-                        comp_inv,
-                        larg_inv,
-                        alt_inv,
-                        pdv_dict,
-                        canais_salvar=canais_salvar_inverso,
-                    )
+                    # O botão "Calcular" NUNCA grava no Google Sheets.
+                    # Somente "Calcular e Salvar" executa o salvamento.
+                    if salvar_inverso:
+                        ok = salvar_no_google_sheets(
+                            fab_inv_final,
+                            nome_inv_final,
+                            fob_calculado,
+                            qtd_inv,
+                            peso_inv,
+                            comp_inv,
+                            larg_inv,
+                            alt_inv,
+                            pdv_dict,
+                            canais_salvar=canais_salvar_inverso,
+                        )
 
-                    if not ok:
-                        st.warning(
-                            "O cálculo foi concluído, mas o salvamento no Google Sheets "
-                            "não pôde ser confirmado."
+                        if ok:
+                            st.success(
+                                "Cálculo realizado e salvo na planilha do Google Sheets com sucesso!"
+                            )
+                        else:
+                            st.warning(
+                                "O cálculo foi concluído, mas o salvamento no Google Sheets "
+                                "não pôde ser confirmado."
+                            )
+                    else:
+                        st.info(
+                            "Cálculo realizado. O resultado não foi salvo no histórico."
                         )
 
                     st.subheader(
