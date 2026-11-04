@@ -48,7 +48,10 @@ LOG_VENDA = 1.0
 EMB_VENDA = 1.0
 CUSTOS_INTERNOS_VENDA = LOG_VENDA + EMB_VENDA
 
-# A aba MP soma mais R$5 em "Frete 2" aos marketplaces.
+# Na planilha comparada, Mercado Livre nao tem valor em "Frete 2".
+# A Shopee continua com R$ 5,00 nessa coluna. Mantemos as taxas separadas
+# para que uma nao altere indevidamente o preco da outra.
+FRETE_EXTRA_MERCADO_LIVRE = 0.0
 FRETE_EXTRA_MARKETPLACE = 5.0
 
 # ============================================================
@@ -329,10 +332,10 @@ def get_frete_ml_g1(peso):
 
 
 def get_taxas_ml_por_preco(peso_tarifa, pdv):
-    """Taxa do ML + custo fixo da matriz + R$5 de Frete 2."""
+    """Taxa do ML + frete da matriz + Frete 2 especifico do ML."""
     comissao = 0.115
     frete_matriz = get_frete_ml_matriz(peso_tarifa, pdv)
-    custo_fixo = frete_matriz + FRETE_EXTRA_MARKETPLACE
+    custo_fixo = frete_matriz + FRETE_EXTRA_MERCADO_LIVRE
     return comissao, custo_fixo, frete_matriz
 
 
@@ -500,7 +503,7 @@ def _resolver_pdv_ml(custo_unitario, peso_tarifa, margem, canal):
             else float("inf")
         )
         frete_matriz = get_frete_ml_matriz(peso_tarifa, minimo)
-        custo_fixo = frete_matriz + FRETE_EXTRA_MARKETPLACE
+        custo_fixo = frete_matriz + FRETE_EXTRA_MERCADO_LIVRE
         pdv_teorico = (custo_unitario + CUSTOS_INTERNOS_VENDA + custo_fixo) / denom
         pdv = max(float(minimo), _centavo_acima(pdv_teorico))
         # Se o preço calculado cruza a faixa, recomputa na faixa seguinte.
@@ -590,7 +593,7 @@ def calcular_pdv(
                 margem=margem,
                 canal=canal,
             )
-            detalhe_taxa = f"Frete R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MARKETPLACE:.2f}"
+            detalhe_taxa = f"Frete R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MERCADO_LIVRE:.2f}"
 
         elif canal == "Shopee":
             pdv, tx_mkt, custo_fixo_marketplace, taxa_fixa = _resolver_pdv_shopee(
@@ -668,13 +671,13 @@ def calcular_fob_inverso(
         tx_mkt, custo_fixo_marketplace, frete_matriz = get_taxas_ml_por_preco(
             peso_tarifa, pdv_alvo
         )
-        detalhe = f"Frete matriz R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MARKETPLACE:.2f}"
+        detalhe = f"Frete matriz R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MERCADO_LIVRE:.2f}"
 
     elif canal_ref == "Mercado Livre Premium":
         tx_mkt = 0.165
         frete_matriz = get_frete_ml_matriz(peso_tarifa, pdv_alvo)
-        custo_fixo_marketplace = frete_matriz + FRETE_EXTRA_MARKETPLACE
-        detalhe = f"Frete matriz R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MARKETPLACE:.2f}"
+        custo_fixo_marketplace = frete_matriz + FRETE_EXTRA_MERCADO_LIVRE
+        detalhe = f"Frete matriz R$ {frete_matriz:.2f} + R$ {FRETE_EXTRA_MERCADO_LIVRE:.2f}"
 
     elif canal_ref == "Shopee":
         tx_mkt, custo_fixo_marketplace, taxa_fixa = get_taxas_shopee_por_preco(
