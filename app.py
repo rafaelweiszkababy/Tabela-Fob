@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from bisect import bisect_right
+from math import ceil, floor
 
 # ============================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -102,32 +103,35 @@ ML_FRETE_MATRIX = [
 
 # ============================================================
 # FRETE "G1" DA ABA "Fretes ML"
-# Usado pelo modelo atual para Amazon e Magalu.
+# MP!G1 usa LOOKUP(G4, 'Fretes ML'!A:A, 'Fretes ML'!C:C).
+# Os limites abaixo são os INÍCIOS das faixas (coluna A),
+# não os limites superiores (coluna B).
 # ============================================================
 FRETE_G1_FAIXAS = [
-    (0.3, 19.95),
-    (0.5, 20.45),
-    (1.0, 21.45),
-    (2.0, 22.95),
-    (3.0, 23.95),
-    (4.0, 24.95),
-    (5.0, 25.95),
-    (9.0, 41.95),
-    (13.0, 65.95),
-    (17.0, 73.45),
-    (23.0, 85.95),
-    (30.0, 98.95),
-    (40.0, 109.45),
-    (50.0, 116.95),
+    (0.0, 19.95),
+    (0.4, 20.45),
+    (0.6, 21.45),
+    (1.1, 22.95),
+    (2.1, 23.95),
+    (3.1, 24.95),
+    (4.1, 25.95),
+    (5.1, 41.95),
+    (9.1, 65.95),
+    (13.1, 73.45),
+    (17.1, 85.95),
+    (23.1, 98.95),
+    (30.1, 109.45),
+    (40.1, 116.95),
 ]
 
 # ============================================================
-# SHOPEE: faixas da aba "Shopee"
-# O cálculo antigo aplicava 14% + R$26 + R$5 para qualquer preço.
-# Isso só é correto para a faixa >= R$200.
+# SHOPEE: faixas da aba "Shopee", com a alteração de outubro/2026.
+# A faixa até R$ 79,99 passou de R$ 4,00 para R$ 4,50 em 01/10/2026.
+# As demais faixas seguem os valores da planilha original.
+# Atenção: benefícios/campanhas e condições específicas da conta NÃO estão aqui.
 # ============================================================
 SHOPEE_FAIXAS = [
-    (0.00, 79.99, 0.20, 4.00),
+    (0.00, 79.99, 0.20, 4.50),
     (80.00, 99.99, 0.14, 16.00),
     (100.00, 199.99, 0.14, 20.00),
     (200.00, 499.99, 0.14, 26.00),
@@ -315,16 +319,13 @@ def get_frete_ml_matriz(peso_tarifa, pdv):
 
 
 def get_frete_ml_g1(peso):
-    """Frete da tabela Fretes ML por faixa de peso."""
+    """Reproduz MP!G1: Excel LOOKUP usa início de faixa <= peso."""
     peso = float(peso)
-
-    for limite_superior, valor in FRETE_G1_FAIXAS:
-        if peso <= limite_superior:
-            return valor
-
-    # A planilha termina em 50 kg; para pesos maiores,
-    # mantemos o último valor disponível, como um lookup aproximado.
-    return FRETE_G1_FAIXAS[-1][1]
+    idx = bisect_right([inicio for inicio, _ in FRETE_G1_FAIXAS], peso) - 1
+    if idx < 0:
+        raise ValueError("Peso fora da faixa da tabela de fretes.")
+    # Acima da última faixa, o LOOKUP mantém o último valor disponível.
+    return FRETE_G1_FAIXAS[idx][1]
 
 
 def get_taxas_ml_por_preco(peso_tarifa, pdv):
@@ -339,12 +340,15 @@ def get_taxas_shopee_por_preco(pdv):
     """Taxa e custo fixo da Shopee conforme a aba Shopee."""
     pdv = float(pdv)
 
-    for minimo, maximo, comissao, taxa_fixa in SHOPEE_FAIXAS:
-        if minimo <= pdv <= maximo:
-            custo_fixo = taxa_fixa + FRETE_EXTRA_MARKETPLACE
-            return comissao, custo_fixo, taxa_fixa
-
-    raise ValueError("PDV inválido para cálculo das taxas da Shopee.")
+    if pdv < 0:
+        raise ValueError("PDV inválido para cálculo das taxas da Shopee.")
+    # XLOOKUP(..., -1) na aba MP seleciona o último limite INFERIOR.
+    # Assim 79,995 ainda pertence à faixa anterior; o preço final
+    # do simulador sempre é arredondado para centavos.
+    i = bisect_right([faixa[0] for faixa in SHOPEE_FAIXAS], pdv) - 1
+    _, _, comissao, taxa_fixa = SHOPEE_FAIXAS[i]
+    custo_fixo = taxa_fixa + FRETE_EXTRA_MARKETPLACE
+    return comissao, custo_fixo, taxa_fixa
 
 
 def get_taxas_outros_canais(canal, frete_g1, pdv=None):
@@ -355,12 +359,26 @@ def get_taxas_outros_canais(canal, frete_g1, pdv=None):
         return tx, custo_fixo, taxa_fixa_original
 
     if canal == "Amazon":
-        return 0.12, 5.5 + frete_g1, 5.5 + frete_g1
+        # MP!I13 = IF(D13>=79,-G$1,0): não há este frete abaixo de R$ 79.
+        custo_fixo = 5.5 + (frete_g1 if pdv is None or pdv >= 79 else 0.0)
+        return 0.12, custo_fixo, custo_fixo
 
     if canal == "Magalu":
-        return 0.18, 5.0 + frete_g1, 5.0 + frete_g1
+        # MP!I14 = IF(D14>=79,-G$1,0).
+        custo_fixo = 5.0 + (frete_g1 if pdv is None or pdv >= 79 else 0.0)
+        return 0.18, custo_fixo, custo_fixo
 
     raise ValueError(f"Canal não suportado: {canal}")
+
+
+def _centavo_acima(valor):
+    """Menor preço em centavos que não fica abaixo do valor teórico."""
+    return ceil(float(valor) * 100 - 1e-9) / 100.0
+
+
+def _centavo_abaixo(valor):
+    """Maior FOB em centavos que não supera o máximo matemático."""
+    return floor(max(0.0, float(valor)) * 100 + 1e-9) / 100.0
 
 # ============================================================
 # CUSTO DE IMPORTAÇÃO
@@ -464,14 +482,7 @@ def _validar_denominador(denom, canal):
 
 
 def _resolver_pdv_ml(custo_unitario, peso_tarifa, margem, canal):
-    """
-    Resolve o PDV do Mercado Livre respeitando a matriz de frete
-    dependente de PESO e PREÇO.
-
-    Como o frete muda quando o PDV cruza 19/49/79/100/120/150/200,
-    calculamos uma hipótese para cada faixa e aceitamos somente a
-    hipótese que cai dentro da própria faixa.
-    """
+    """Menor PDV em centavos com a margem exigida e a faixa real de ML."""
     if canal == "Mercado Livre Clássico":
         comissao = 0.115
     elif canal == "Mercado Livre Premium":
@@ -479,76 +490,52 @@ def _resolver_pdv_ml(custo_unitario, peso_tarifa, margem, canal):
     else:
         raise ValueError("Canal inválido para Mercado Livre.")
 
-    for i, limite_inferior in enumerate(ML_PRECO_FAIXAS):
-        limite_superior = (
+    denom = 1.0 - comissao - IMP_LP_RATE - ICMS_RATE - margem
+    _validar_denominador(denom, canal)
+
+    for i, minimo in enumerate(ML_PRECO_FAIXAS):
+        max_exclusivo = (
             ML_PRECO_FAIXAS[i + 1]
             if i + 1 < len(ML_PRECO_FAIXAS)
             else float("inf")
         )
+        frete_matriz = get_frete_ml_matriz(peso_tarifa, minimo)
+        custo_fixo = frete_matriz + FRETE_EXTRA_MARKETPLACE
+        pdv_teorico = (custo_unitario + CUSTOS_INTERNOS_VENDA + custo_fixo) / denom
+        pdv = max(float(minimo), _centavo_acima(pdv_teorico))
+        # Se o preço calculado cruza a faixa, recomputa na faixa seguinte.
+        if pdv < max_exclusivo:
+            return pdv, comissao, custo_fixo, frete_matriz
 
-        frete_matriz = get_frete_ml_matriz(peso_tarifa, limite_inferior)
-        custo_fixo_marketplace = frete_matriz + FRETE_EXTRA_MARKETPLACE
-
-        denom = (
-            1.0
-            - comissao
-            - IMP_LP_RATE
-            - ICMS_RATE
-            - margem
-        )
-        _validar_denominador(denom, canal)
-
-        pdv = (
-            custo_unitario
-            + CUSTOS_INTERNOS_VENDA
-            + custo_fixo_marketplace
-        ) / denom
-
-        # Excel MATCH usa a faixa cuja origem é <= PDV.
-        # Logo a faixa é [limite_inferior, limite_superior).
-        if pdv >= limite_inferior and pdv < limite_superior:
-            return pdv, comissao, custo_fixo_marketplace, frete_matriz
-
-    # Caso extremo de arredondamento numérico:
-    ultimo_frete = get_frete_ml_matriz(peso_tarifa, ML_PRECO_FAIXAS[-1])
-    denom = 1.0 - comissao - IMP_LP_RATE - ICMS_RATE - margem
-    _validar_denominador(denom, canal)
-    pdv = (
-        custo_unitario
-        + CUSTOS_INTERNOS_VENDA
-        + ultimo_frete
-        + FRETE_EXTRA_MARKETPLACE
-    ) / denom
-    return pdv, comissao, ultimo_frete + FRETE_EXTRA_MARKETPLACE, ultimo_frete
+    raise ValueError("Não foi possível encontrar um PDV consistente nas faixas do ML.")
 
 
 def _resolver_pdv_shopee(custo_unitario, margem):
-    """Resolve o PDV da Shopee respeitando suas faixas de preço."""
-    for i, (minimo, maximo, comissao, taxa_fixa) in enumerate(SHOPEE_FAIXAS):
+    """Menor PDV em centavos com margem-alvo conforme as faixas Shopee."""
+    for minimo, maximo, comissao, taxa_fixa in SHOPEE_FAIXAS:
         denom = 1.0 - comissao - IMP_LP_RATE - ICMS_RATE - margem
         _validar_denominador(denom, "Shopee")
+        custo_fixo = taxa_fixa + FRETE_EXTRA_MARKETPLACE
+        pdv_teorico = (custo_unitario + CUSTOS_INTERNOS_VENDA + custo_fixo) / denom
+        pdv = max(float(minimo), _centavo_acima(pdv_teorico))
+        if pdv <= maximo + 1e-9:
+            return pdv, comissao, custo_fixo, taxa_fixa
 
-        custo_fixo_marketplace = taxa_fixa + FRETE_EXTRA_MARKETPLACE
-        pdv = (
-            custo_unitario
-            + CUSTOS_INTERNOS_VENDA
-            + custo_fixo_marketplace
-        ) / denom
+    raise ValueError("Não foi possível encontrar um PDV consistente nas faixas da Shopee.")
 
-        if pdv >= minimo and pdv <= maximo:
-            return pdv, comissao, custo_fixo_marketplace, taxa_fixa
 
-    # Última faixa é aberta.
-    _, _, comissao, taxa_fixa = SHOPEE_FAIXAS[-1]
-    denom = 1.0 - comissao - IMP_LP_RATE - ICMS_RATE - margem
-    _validar_denominador(denom, "Shopee")
-    custo_fixo_marketplace = taxa_fixa + FRETE_EXTRA_MARKETPLACE
-    pdv = (
-        custo_unitario
-        + CUSTOS_INTERNOS_VENDA
-        + custo_fixo_marketplace
-    ) / denom
-    return pdv, comissao, custo_fixo_marketplace, taxa_fixa
+def _resolver_pdv_frete_condicional(custo_unitario, margem, canal, frete_g1):
+    """Aplica MP!I13/I14: frete G1 somente a partir de R$ 79."""
+    for minimo, max_exclusivo in ((0.0, 79.0), (79.0, float("inf"))):
+        tx, custo_fixo, _ = get_taxas_outros_canais(canal, frete_g1, pdv=minimo)
+        denom = 1.0 - tx - IMP_LP_RATE - ICMS_RATE - margem
+        _validar_denominador(denom, canal)
+        pdv_teorico = (custo_unitario + CUSTOS_INTERNOS_VENDA + custo_fixo) / denom
+        pdv = max(minimo, _centavo_acima(pdv_teorico))
+        if pdv < max_exclusivo:
+            return pdv, tx, custo_fixo
+
+    raise ValueError(f"Não foi possível encontrar um PDV consistente para {canal}.")
 
 # ============================================================
 # CÁLCULO DIRETO (FOB -> PDV)
@@ -577,6 +564,8 @@ def calcular_pdv(
     )
 
     # Aba MP: G7 = G6 + E2 (custo da caixa por unidade).
+    if not (0 <= margem < 1) or float(caixa) < 0:
+        raise ValueError("Margem deve estar entre 0% e 100%, e caixa não pode ser negativa.")
     custo_unitario += float(caixa)
 
     canais_nomes = [
@@ -614,28 +603,24 @@ def calcular_pdv(
             )
 
         else:
-            if canal == "Amazon":
-                tx_mkt, custo_fixo_marketplace, _ = get_taxas_outros_canais(
-                    canal, frete_g1
-                )
-                detalhe_taxa = f"R$ 5,50 + frete G1 R$ {frete_g1:.2f}"
-            else:
-                tx_mkt, custo_fixo_marketplace, _ = get_taxas_outros_canais(
-                    canal, frete_g1
-                )
-                detalhe_taxa = f"R$ 5,00 + frete G1 R$ {frete_g1:.2f}"
+            pdv, tx_mkt, custo_fixo_marketplace = _resolver_pdv_frete_condicional(
+                custo_unitario=custo_unitario,
+                margem=margem,
+                canal=canal,
+                frete_g1=frete_g1,
+            )
+            taxa_base = 5.5 if canal == "Amazon" else 5.0
+            detalhe_taxa = (
+                f"R$ {taxa_base:.2f} + frete G1 R$ {frete_g1:.2f}"
+                if pdv >= 79
+                else f"R$ {taxa_base:.2f} (sem frete G1 abaixo de R$ 79)"
+            )
 
-            denom = 1.0 - tx_mkt - IMP_LP_RATE - ICMS_RATE - margem
-            _validar_denominador(denom, canal)
-
-            pdv = (
-                custo_unitario
-                + CUSTOS_INTERNOS_VENDA
-                + custo_fixo_marketplace
-            ) / denom
-
-        # Recalcula a margem pela própria equação da venda.
-        lucro = pdv * margem
+        # Lucro/margem REAL no preço exibido (em centavos), sem superestimar.
+        lucro = pdv * (1 - tx_mkt - IMP_LP_RATE - ICMS_RATE) - (
+            custo_unitario + CUSTOS_INTERNOS_VENDA + custo_fixo_marketplace
+        )
+        margem_real = lucro / pdv
 
         valores_pdv_dict[canal] = round(pdv, 2)
         resultados.append(
@@ -645,7 +630,7 @@ def calcular_pdv(
                 "Frete / Taxas Fixas": f"R$ {custo_fixo_marketplace:.2f}",
                 "PDV Recomendado": f"R$ {pdv:.2f}",
                 "Lucro Unitário": f"R$ {lucro:.2f}",
-                "Margem Resultante": f"{margem * 100:.1f}%",
+                "Margem Resultante": f"{margem_real * 100:.2f}%",
             }
         )
 
@@ -667,6 +652,10 @@ def calcular_fob_inverso(
     margem,
     caixa=0.0,
 ):
+    if not (0 <= margem < 1) or float(caixa) < 0:
+        raise ValueError("Margem deve estar entre 0% e 100%, e caixa não pode ser negativa.")
+    if qtd <= 0 or cambio <= 0 or pdv_alvo <= 0:
+        raise ValueError("Quantidade, câmbio e PDV devem ser maiores que zero.")
     peso_cubado = (comp * larg * alt) / 6000.0
     peso_tarifa = max(peso_fisico, peso_cubado)
     frete_g1 = get_frete_ml_g1(peso_tarifa)
@@ -695,15 +684,21 @@ def calcular_fob_inverso(
 
     elif canal_ref == "Amazon":
         tx_mkt, custo_fixo_marketplace, _ = get_taxas_outros_canais(
-            "Amazon", frete_g1
+            "Amazon", frete_g1, pdv=pdv_alvo
         )
-        detalhe = f"R$ 5,50 + frete G1 R$ {frete_g1:.2f}"
+        detalhe = (
+            f"R$ 5,50 + frete G1 R$ {frete_g1:.2f}" if pdv_alvo >= 79
+            else "R$ 5,50 (sem frete G1 abaixo de R$ 79)"
+        )
 
     elif canal_ref == "Magalu":
         tx_mkt, custo_fixo_marketplace, _ = get_taxas_outros_canais(
-            "Magalu", frete_g1
+            "Magalu", frete_g1, pdv=pdv_alvo
         )
-        detalhe = f"R$ 5,00 + frete G1 R$ {frete_g1:.2f}"
+        detalhe = (
+            f"R$ 5,00 + frete G1 R$ {frete_g1:.2f}" if pdv_alvo >= 79
+            else "R$ 5,00 (sem frete G1 abaixo de R$ 79)"
+        )
 
     else:
         raise ValueError("Marketplace inválido.")
@@ -1145,6 +1140,9 @@ with tab2:
                     caixa=caixa_inv_val,
                 )
 
+                # O fornecedor recebe FOB em centavos: nunca arredondar
+                # PARA CIMA o preço máximo, pois isso reduziria a margem.
+                fob_calculado = _centavo_abaixo(fob_calculado)
                 if fob_calculado <= 0:
                     st.warning(
                         "O PDV desejado é muito baixo para cobrir os custos logísticos "
